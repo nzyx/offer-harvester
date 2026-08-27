@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="面邀收割机 Offer Harvester —— 浏览器侧边栏 AI 求职助手，JD 分析、简历优化、打招呼语一键生成。">
+<meta http-equiv="refresh" content="0;url=showcase.html">
+<title>面邀收割机 · Offer Harvester</title>
+<style>
+  :root{--red:#E60012;--ink:#111;--muted:#8a8a8a}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{display:grid;place-items:center;background:#fff;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{text-align:center;padding:24px}
+  .mark{font-size:12px;letter-spacing:.42em;color:var(--red);text-transform:uppercase;margin-bottom:20px}
+  .t{font-size:24px;font-weight:700;letter-spacing:.02em;margin-bottom:10px}
+  .sub{font-size:13px;color:var(--muted);margin-bottom:26px}
+  .bar{width:128px;height:2px;background:#eee;margin:0 auto;position:relative;overflow:hidden;border-radius:2px}
+  .bar::after{content:"";position:absolute;left:-40%;top:0;height:100%;width:40%;background:var(--red);
+    border-radius:2px;animation:slide 1.1s cubic-bezier(.4,0,.2,1) infinite}
+  @keyframes slide{0%{left:-40%}100%{left:100%}}
+  a{color:var(--muted);font-size:12px;text-decoration:none;border-bottom:1px solid #ddd;padding-bottom:2px}
+  a:hover{color:var(--red);border-color:var(--red)}
+</style>
+<script>setTimeout(function(){window.location.replace("showcase.html");},60);</script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="mark">Offer Harvester</div>
+    <div class="t">面邀收割机</div>
+    <div class="sub">正在进入项目主页…</div>
+    <div class="bar"></div>
+    <p style="margin-top:28px"><a href="showcase.html">若未自动跳转，点此进入 →</a></p>
+  </div>
+</body>
+</html>
