@@ -1,5 +1,12 @@
 # 面邀收割机（Chrome / Edge 扩展）
 
+[![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4)](https://developer.chrome.com/docs/extensions/mv3)
+[![Platform](https://img.shields.io/badge/Platform-Chrome%20%7C%20Edge-34A853)](https://github.com/nzyx/Job-Interview-Assistant)
+[![Built with](https://img.shields.io/badge/Built%20with-Vanilla%20JS-FF7139)](https://developer.mozilla.org/docs/Web/JavaScript)
+[![Zero Build](https://img.shields.io/badge/Build-Zero%20Config-000000)](https://github.com/nzyx/Job-Interview-Assistant)
+[![Privacy](https://img.shields.io/badge/Privacy-100%25%20Local-9F1D20)](https://github.com/nzyx/Job-Interview-Assistant)
+[![AI API](https://img.shields.io/badge/AI-OpenAI%20Compatible-412991)](https://platform.openai.com/docs/api-reference)
+
 粘贴岗位 JD，一键生成面试准备方案、高频问题预测、打招呼语和简历优化建议。支持 7 家主流 AI 服务，所有数据本地存储，不上传任何服务器。
 
 ## 功能
