@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>面邀收割机 · 本地优先的面试备战扩展</title>
+<style>
+  :root{
+    --paper:#ffffff;
+    --ink:#1A1A1A;
+    --ink-2:#454545;
+    --muted:#8a8a8a;
+    --accent:#E60012;
+    --accent-soft:#FCE4E7;
+    --line:#ECECEC;
+    --line-2:#f4f4f4;
+    --serif:"Songti SC","STSong","SimSun",ui-serif,Georgia,"Times New Roman",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:var(--sans);line-height:1.85;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:980px;margin:0 auto;padding:0 28px;}
+
+  /* ── Hero ─────────────────────────────── */
+  .hero{padding:92px 0 60px;border-bottom:1px solid var(--ink);}
+  .eyebrow{
+    font-size:12px;letter-spacing:.24em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:22px;
+  }
+  .hero h1{
+    font-family:var(--serif);font-size:clamp(44px,8vw,68px);
+    font-weight:800;letter-spacing:-.01em;line-height:1.05;margin-bottom:18px;
+  }
+  .hero .lead{
+    font-size:17.5px;color:var(--ink-2);max-width:660px;margin-bottom:34px;
+  }
+  .cta{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:54px;}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:13px 30px;border-radius:9px;font-size:15px;font-weight:600;
+    text-decoration:none;transition:transform .15s ease,box-shadow .15s ease;
+  }
+  .btn-dark{background:var(--ink);color:#fff;}
+  .btn-dark:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(26,26,26,.18);}
+  .btn-red{background:var(--accent);color:#fff;}
+  .btn-red:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(230,0,18,.22);}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-top:1px solid var(--line);}
+  .stat{padding:22px 8px 4px;border-right:1px solid var(--line);}
+  .stat:last-child{border-right:0;}
+  .stat .n{font-family:var(--serif);font-size:34px;font-weight:800;color:var(--accent);line-height:1;}
+  .stat .l{font-size:13px;color:var(--muted);margin-top:8px;}
+
+  /* ── Chapter section ──────────────────── */
+  section{padding:64px 0;border-bottom:1px solid var(--line-2);}
+  .chap{margin-bottom:30px;}
+  .chap-num{font-family:var(--serif);font-size:64px;font-weight:800;color:var(--accent);line-height:.9;display:block;}
+  .chap-cap{font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:6px 0 10px;}
+  .chap h2{font-family:var(--serif);font-size:28px;font-weight:800;letter-spacing:-.01em;}
+  .lead-p{font-size:16.5px;color:var(--ink-2);max-width:720px;margin-bottom:8px;}
+  .lead-p::first-letter{
+    font-family:var(--serif);font-size:3.1em;font-weight:800;color:var(--accent);
+    float:left;line-height:.82;padding:6px 12px 0 0;
+  }
+  mark{background:var(--accent-soft);color:var(--ink);padding:1px 5px;border-radius:3px;font-weight:600;}
+
+  /* ── Cards (产出模式) ───────────────────── */
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:8px;}
+  .card{border:1px solid var(--line);border-radius:14px;padding:26px 24px;transition:border-color .15s,transform .15s;}
+  .card:hover{border-color:var(--accent);transform:translateY(-3px);}
+  .card .k{
+    display:inline-block;font-size:12px;font-weight:700;color:var(--accent);
+    border:1px solid rgba(230,0,18,.3);border-radius:6px;padding:3px 10px;margin-bottom:14px;
+  }
+  .card h3{font-family:var(--serif);font-size:20px;font-weight:800;margin-bottom:10px;}
+  .card p{font-size:14px;color:var(--ink-2);}
+  .card .meta{font-size:12.5px;color:var(--muted);margin-top:14px;padding-top:12px;border-top:1px solid var(--line-2);}
+
+  /* ── Flow (三步) ──────────────────────── */
+  .flow{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:8px;}
+  .step{border:1px solid var(--line);border-radius:14px;padding:26px 22px;position:relative;}
+  .step .sn{font-family:var(--serif);font-size:46px;font-weight:800;color:var(--accent);line-height:1;}
+  .step h3{font-size:16px;font-weight:700;margin:12px 0 8px;}
+  .step p{font-size:13.5px;color:var(--ink-2);}
+
+  /* ── Methods ──────────────────────────── */
+  .methods{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:8px;}
+  .method{border:1px solid var(--line);border-radius:14px;padding:24px 26px;display:flex;gap:18px;}
+  .method .mi{
+    flex:0 0 auto;width:46px;height:46px;border-radius:10px;background:var(--accent-soft);
+    color:var(--accent);font-family:var(--serif);font-weight:800;font-size:20px;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .method h3{font-size:16px;font-weight:700;margin-bottom:6px;}
+  .method p{font-size:13.5px;color:var(--ink-2);}
+
+  /* ── Service chips ────────────────────── */
+  .chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;}
+  .chip{
+    font-size:13.5px;font-weight:600;color:var(--ink);
+    border:1px solid var(--line);border-radius:999px;padding:8px 16px;background:#fff;
+  }
+  .chip.hot{border-color:var(--accent);color:var(--accent);}
+
+  /* ── Security callout ─────────────────── */
+  .secure{border:1px solid var(--ink);border-radius:14px;padding:28px 30px;margin-top:8px;background:#fff;}
+  .secure ul{list-style:none;margin-top:6px;}
+  .secure li{position:relative;padding:9px 0 9px 26px;font-size:14.5px;color:var(--ink-2);border-bottom:1px dashed var(--line-2);}
+  .secure li:last-child{border-bottom:0;}
+  .secure li::before{content:"";position:absolute;left:4px;top:18px;width:8px;height:8px;border-radius:2px;background:var(--accent);}
+
+  /* ── Steps (快速开始) ─────────────────── */
+  .how{margin-top:8px;}
+  .how .row{display:flex;gap:18px;padding:16px 0;border-bottom:1px solid var(--line-2);}
+  .how .row:last-child{border-bottom:0;}
+  .how .hn{font-family:var(--serif);font-size:26px;font-weight:800;color:var(--accent);flex:0 0 38px;}
+  .how .ht{font-size:15px;}
+  .how .ht b{font-weight:700;}
+  .how .ht span{color:var(--muted);font-size:13.5px;}
+
+  footer{padding:46px 0 56px;text-align:center;color:var(--muted);font-size:13px;}
+  footer a{color:var(--accent);text-decoration:none;font-weight:600;}
+
+  @media (max-width:760px){
+    .stats{grid-template-columns:repeat(2,1fr);}
+    .stat:nth-child(2){border-right:0;}
+    .stat:nth-child(1),.stat:nth-child(2){border-bottom:1px solid var(--line);}
+    .cards,.flow{grid-template-columns:1fr;}
+    .methods{grid-template-columns:1fr;}
+  }
+  @media print{
+    body{background:#fff;}
+    .hero{border-bottom:2px solid var(--ink);}
+    .card,.step,.method,.secure{break-inside:avoid;}
+    .btn{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Chrome / Edge 扩展 · 本地优先 · 零构建</div>
+    <h1>面邀收割机</h1>
+    <p class="lead">把「投简历 → 面试准备」这件事本地化、自动化。粘贴岗位 JD、上传你的简历，一键生成面试准备方案、打招呼语与简历优化建议。数据全程留在你的浏览器，<mark>不上传任何服务器</mark>。</p>
+    <div class="cta">
+      <a class="btn btn-dark" href="https://github.com/nzyx/offer-harvester" target="_blank">GitHub 仓库</a>
+      <a class="btn btn-red" href="#start">快速开始</a>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n">3</div><div class="l">产出模式</div></div>
+      <div class="stat"><div class="n">7+</div><div class="l">兼容 AI 服务</div></div>
+      <div class="stat"><div class="n">100%</div><div class="l">本地运行</div></div>
+      <div class="stat"><div class="n">0</div><div class="l">数据上传</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ 01 为什么需要它 ============ -->
+<section>
+  <div class="wrap">
+    <div class="chap">
+      <span class="chap-num">01</span>
+      <div class="chap-cap">Why</div>
+      <h2>为什么需要它</h2>
+    </div>
+    <p class="lead-p">海投时代，最大的浪费不是「投得少」，而是<mark>每份岗位都从头准备、却抓不住重点</mark>。JD 读不进去、面试题靠蒙、简历石沉大海。面邀收割机把这三件事交给本地大模型：你只负责把 JD 和简历丢进来，它把「分析 → 准备 → 表达」一次性做完，且所有文本都留在你自己的机器上。</p>
+  </div>
+</section>
+
+<!-- ============ 02 三大产出模式 ============ -->
+<section>
+  <div class="wrap">
+    <div class="chap">
+      <span class="chap-num">02</span>
+      <div class="chap-cap">Modes</div>
+      <h2>三大产出模式</h2>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <span class="k">模式一</span>
+        <h3>面试准备</h3>
+        <p>先解析 JD（公司业务、核心技能、隐藏要求），再生成高频面试问题 + 现场要点。<mark>两步串联</mark>，不是空话套模板。</p>
+        <div class="meta">岗位分析 → 高频问题 → 现场要点</div>
+      </div>
+      <div class="card">
+        <span class="k">模式二</span>
+        <h3>打招呼语</h3>
+        <p>专业版 / 简洁版双版本，并附「别踩的坑」。Boss 直聘、猎聘、智联一键粘贴，HR 愿意点开你的简历。</p>
+        <div class="meta">专业版 · 简洁版 · 注意事项</div>
+      </div>
+      <div class="card">
+        <span class="k">模式三</span>
+        <h3>简历优化</h3>
+        <p>匹配度评分 + 经历改写（动作 / 方法 / 技术 / 成果键值化）+ 关键词植入 + 可直接复制的成稿话术。</p>
+        <div class="meta">评分卡 · 经历卡 · 成品话术</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 03 三步上手 ============ -->
+<section>
+  <div class="wrap">
+    <div class="chap">
+      <span class="chap-num">03</span>
+      <div class="chap-cap">How it works</div>
+      <h2>三步上手</h2>
+    </div>
+    <div class="flow">
+      <div class="step">
+        <div class="sn">1</div>
+        <h3>粘贴岗位 JD</h3>
+        <p>把招聘链接里的职责要求贴进侧边栏，自动去噪、保留关键信息。</p>
+      </div>
+      <div class="step">
+        <div class="sn">2</div>
+        <h3>上传你的简历</h3>
+        <p>支持 PDF / Word，<mark>本地解析</mark>，文件不上传，关掉复制保护也能用。</p>
+      </div>
+      <div class="step">
+        <div class="sn">3</div>
+        <h3>一键生成</h3>
+        <p>选「面试准备 / 打招呼语 / 简历优化」，结果秒出，右上角可导出 HTML。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 04 核心设计 ============ -->
+<section>
+  <div class="wrap">
+    <div class="chap">
+      <span class="chap-num">04</span>
+      <div class="chap-cap">Design</div>
+      <h2>核心设计</h2>
+    </div>
+    <div class="methods">
+      <div class="method"><div class="mi">01</div><div><h3>两步串联</h3><p>先分析岗位、再生成准备，结果真正「基于分析」而非泛泛而谈，是质量的关键。</p></div></div>
+      <div class="method"><div class="mi">02</div><div><h3>本地优先</h3><p>仅调用你自己的 API Key，数据不离开浏览器；复制保护可一键关闭，零后台上传。</p></div></div>
+      <div class="method"><div class="mi">03</div><div><h3>OpenAI 兼容</h3><p>填任意 OpenAI 兼容接口地址即可，云端或本地 llama.cpp 通吃，不被厂商绑定。</p></div></div>
+      <div class="method"><div class="mi">04</div><div><h3>导出即分享</h3><p>结果一键导出为自包含可视化网页，无脚本、无外链，可放心转发给朋友或导师。</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 05 支持的 AI 服务 ============ -->
+<section>
+  <div class="wrap">
+    <div class="chap">
+      <span class="chap-num">05</span>
+      <div class="chap-cap">Providers</div>
+      <h2>支持的 AI 服务</h2>
+    </div>
+    <p class="lead-p">一句话：<mark>只要接口是 OpenAI 格式，就能用</mark>。下面是一部分常见可选项：</p>
+    <div class="chips" style="margin-top:18px">
+      <span class="chip hot">OpenAI</span>
+      <span class="chip hot">Azure OpenAI</span>
+      <span class="chip">DeepSeek</span>
+      <span class="chip">通义千问</span>
+      <span class="chip">智谱 GLM</span>
+      <span class="chip">Kimi</span>
+      <span class="chip">Ollama（本地 llama.cpp）</span>
+      <span class="chip">vLLM</span>
+      <span class="chip">AnythingLLM</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 06 安全与隐私 ============ -->
+<section>
+  <div class="wrap">
+    <div class="chap">
+      <span class="chap-num">06</span>
+      <div class="chap-cap">Security</div>
+      <h2>安全与隐私</h2>
+    </div>
+    <div class="secure">
+      <ul>
+        <li>调接口时强制 <mark>redirect:'error'</mark> + <mark>referrer:'no-referrer'</mark>，防 SSRF 跳转与 Referer 泄露。</li>
+        <li>渲染层先转义所有文本再注入，AI / 用户输入不会触发 XSS。</li>
+        <li>导出的 HTML 不含 &lt;script&gt;、不含外链，可安全分享。</li>
+        <li>接口地址做协议白名单（仅 https 或本地 http），挡掉危险协议。</li>
+        <li>提示：API Key 以明文存于浏览器本地存储（个人自用可接受）；共享电脑请注意退出登录。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 07 快速开始 ============ -->
+<section id="start">
+  <div class="wrap">
+    <div class="chap">
+      <span class="chap-num">07</span>
+      <div class="chap-cap">Get started</div>
+      <h2>快速开始</h2>
+    </div>
+    <div class="how">
+      <div class="row"><div class="hn">1</div><div class="ht"><b>开启开发者模式</b><br><span>打开 chrome://extensions（Edge 为扩展管理页），右上角打开「开发者模式」。</span></div></div>
+      <div class="row"><div class="hn">2</div><div class="ht"><b>加载已解压的扩展</b><br><span>点「加载已解压的扩展程序」，选择本项目文件夹。</span></div></div>
+      <div class="row"><div class="hn">3</div><div class="ht"><b>填写接口</b><br><span>点工具栏侧边栏图标打开「面邀收割机」，在设置里填接口地址 + API Key + 模型名。</span></div></div>
+      <div class="row"><div class="hn">4</div><div class="ht"><b>生成并导出</b><br><span>粘贴 JD / 上传简历，点对应按钮；生成后右上角可「导出 HTML」。</span></div></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    面邀收割机 · 本地优先的面试备战扩展<br>
+    <a href="https://github.com/nzyx/offer-harvester" target="_blank">github.com/nzyx/offer-harvester</a> · MIT License
+  </div>
+</footer>
+
+</body>
+</html>
