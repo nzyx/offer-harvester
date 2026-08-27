@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>设置</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="options-body">
+  <main class="options-card">
+    <p class="eyebrow">面邀收割机</p>
+    <h1>连接你的 AI 服务</h1>
+    <p class="options-intro">填写 API 根地址或完整的 Chat Completions 地址。扩展安装时会申请访问接口所需的网页权限。根地址会自动补全为 Chat Completions 接口。</p>
+
+    <label>
+      常用 AI 服务
+      <select id="api-preset">
+        <option value="">自定义地址</option>
+        <option value="https://api.openai.com/v1">OpenAI</option>
+        <option value="https://api.deepseek.com/v1">DeepSeek</option>
+        <option value="https://api.moonshot.cn/v1">Moonshot (Kimi)</option>
+        <option value="https://open.bigmodel.cn/api/paas/v4">智谱 GLM</option>
+        <option value="https://dashscope.aliyuncs.com/compatible-mode/v1">通义千问</option>
+        <option value="https://ark.cn-beijing.volces.com/api/v3">豆包 (字节)</option>
+        <option value="https://api.anthropic.com/v1">Anthropic (Claude)</option>
+      </select>
+    </label>
+
+    <label>
+      接口地址
+      <input id="api-url" type="url" placeholder="https://api.openai.com/v1 或完整 Chat Completions 地址">
+    </label>
+
+    <label>
+      API Key
+      <input id="api-key" type="password" placeholder="sk-...">
+    </label>
+
+    <label>
+      模型名称
+      <input id="model" type="text" placeholder="例如 gpt-4.1-mini / deepseek-chat">
+      <small class="model-hint">请务必输入与API文档完全一致的模型名称，否则将调用失败</small>
+    </label>
+
+    <div class="options-actions">
+      <button id="save-settings" class="button button-primary">保存设置</button>
+      <button id="test-connection" class="button button-secondary">测试连接</button>
+      <button id="close-options" class="button button-secondary">关闭页面</button>
+    </div>
+    <p id="settings-status" class="status-message"></p>
+
+    <p class="options-notice">
+      安全须知：API Key 以<strong>明文</strong>保存在浏览器本地扩展存储（chrome.storage.local），不会上传到任何服务器，仅在你点击生成时发往你所填写的 AI 接口。请勿在公共或共用电脑上保存真实 Key；如追求更高安全性，可改用本地大模型（如 127.0.0.1 的推理服务）或每次手动填写。
+    </p>
+  </main>
+  <script src="common.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+{
+    "manifest_version": 3,
+    "minimum_chrome_version": "114",
+    "name": "面邀收割机",
+    "version": "1.0.6",
+    "description": "面邀收割机：粘贴岗位JD即可自动生成面试准备方案、高频问题预测、自我介绍定制和现场技巧。支持简历上传与AI优化，支持OpenAI/DeepSeek/Kimi/GLM/通义千问/豆包/Claude等多种AI服务。所有数据本地存储，不上传任何个人信息。",
+    "action": {
+        "default_title": "打开面邀收割机",
+        "default_icon": "assets/Offer-PC.png"
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "side_panel": {
+        "default_path": "popup.html"
+    },
+    "permissions": [
+        "storage",
+        "sidePanel",
+        "tabs"
+    ],
+    "host_permissions": [
+        "http://*/*",
+        "https://*/*"
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "http://*/*",
+                "https://*/*"
+            ],
+            "js": [
+                "copy-guard-main.js"
+            ],
+            "run_at": "document_start",
+            "all_frames": true,
+            "world": "MAIN"
+        },
+        {
+            "matches": [
+                "http://*/*",
+                "https://*/*"
+            ],
+            "js": [
+                "copy-guard.js"
+            ],
+            "run_at": "document_start",
+            "all_frames": true
+        }
+    ],
+    "options_page": "options.html",
+    "icons": {
+        "128": "assets/Offer-PC.png"
+    }
+}

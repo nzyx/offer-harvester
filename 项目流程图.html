@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>面邀收割机 · 项目架构与流程图</title>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --card: #ffffff;
+    --ink: #334155;
+    --ink-strong: #1e293b;
+    --line: #94a3b8;
+    --blue: #3b6ea5;
+    --blue-bg: #e8f0fe;
+    --red: #E60012;
+    --red-bg: #fdecec;
+    --amber-bg: #fef3e2;
+    --amber-line: #e0a458;
+    --green-bg: #e7f3ec;
+    --purple-bg: #f0eefa;
+    --purple-line: #8b7fd6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    line-height: 1.5;
+    padding: 32px 20px 64px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 8px; }
+  header h1 { font-size: 24px; color: var(--ink-strong); margin: 0 0 6px; letter-spacing: .5px; }
+  header p { margin: 0; color: var(--line); font-size: 13px; }
+  .section {
+    background: var(--card);
+    border: 1px solid #ececec;
+    border-radius: 16px;
+    padding: 22px 18px 8px;
+    margin: 26px 0;
+    box-shadow: 0 2px 14px rgba(0,0,0,.04);
+  }
+  .section h2 {
+    font-size: 17px; margin: 0 0 14px; color: var(--ink-strong);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section h2::before {
+    content: ""; width: 6px; height: 18px; border-radius: 3px;
+    background: var(--blue);
+  }
+  svg { width: 100%; height: auto; display: block; }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px;
+    font-size: 12px; color: var(--ink);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid #ccc; }
+  .note {
+    font-size: 12.5px; color: var(--ink); background: #f7f8fa;
+    border-left: 3px solid var(--blue); border-radius: 6px;
+    padding: 10px 14px; margin: 14px 2px 4px;
+  }
+  .note b { color: var(--red); }
+  footer { text-align: center; color: var(--line); font-size: 12px; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>面邀收割机 · 项目架构与流程图</h1>
+    <p>Chrome / Edge Manifest V3 侧边栏扩展 · 零框架纯前端 · 本地存储不上传</p>
+  </header>
+
+  <!-- ============ 1. 架构总览 ============ -->
+  <div class="section">
+    <h2>一、系统架构总览</h2>
+    <svg viewBox="0 0 800 470" role="img" aria-label="架构总览">
+      <defs>
+        <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#94a3b8"/>
+        </marker>
+        <style>
+          .box { fill:#fff; stroke:#cbd5e1; stroke-width:1.4; }
+          .t { font-size:13px; fill:#334155; font-weight:600; text-anchor:middle; }
+          .s { font-size:10.5px; fill:#64748b; text-anchor:middle; }
+          .lbl { font-size:10px; fill:#94a3b8; text-anchor:middle; }
+          .edge { stroke:#94a3b8; stroke-width:1.4; fill:none; }
+        </style>
+      </defs>
+
+      <!-- Row1: UI -->
+      <rect class="box" x="70" y="30" width="220" height="56" rx="10" fill="#e8f0fe"/>
+      <text class="t" x="180" y="54">侧边栏 UI</text>
+      <text class="s" x="180" y="72">popup.html</text>
+
+      <rect class="box" x="510" y="30" width="220" height="56" rx="10" fill="#e8f0fe"/>
+      <text class="t" x="620" y="54">设置页</text>
+      <text class="s" x="620" y="72">options.html</text>
+
+      <!-- Row2: core -->
+      <rect class="box" x="60" y="150" width="300" height="64" rx="10" fill="#f0eefa" stroke="#8b7fd6"/>
+      <text class="t" x="210" y="174">业务核心 popup.js</text>
+      <text class="s" x="210" y="192">generate / parseSections / render</text>
+      <text class="s" x="210" y="206">记忆恢复 / 复制控制</text>
+
+      <rect class="box" x="470" y="150" width="270" height="64" rx="10" fill="#e7f3ec" stroke="#7cae91"/>
+      <text class="t" x="605" y="174">后台 background.js</text>
+      <text class="s" x="605" y="192">Service Worker</text>
+      <text class="s" x="605" y="206">复制保护编排 / 侧边栏行为</text>
+
+      <!-- Row3: content scripts -->
+      <rect class="box" x="60" y="280" width="300" height="64" rx="10" fill="#fef3e2" stroke="#e0a458"/>
+      <text class="t" x="210" y="304">copy-guard-main.js</text>
+      <text class="s" x="210" y="322">MAIN 世界 · 重写 preventDefault</text>
+      <text class="s" x="210" y="336">放行 copy/cut/ctrl+c 等</text>
+
+      <rect class="box" x="470" y="280" width="270" height="64" rx="10" fill="#fef3e2" stroke="#e0a458"/>
+      <text class="t" x="605" y="304">copy-guard.js</text>
+      <text class="s" x="605" y="322">ISOLATED 世界 · 移除页面拦截</text>
+      <text class="s" x="605" y="336">注入 user-select:text CSS</text>
+
+      <!-- Row4: resources -->
+      <rect class="box" x="60" y="400" width="300" height="50" rx="10"/>
+      <text class="t" x="210" y="420">Prompt 模板</text>
+      <text class="s" x="210" y="438">prompts/*.md → prompts.js 同步加载</text>
+
+      <rect class="box" x="470" y="400" width="270" height="50" rx="10"/>
+      <text class="t" x="605" y="420">文件解析库 lib/</text>
+      <text class="s" x="605" y="438">pdf.js + mammoth（PDF/DOCX）</text>
+
+      <!-- External API -->
+      <rect class="box" x="690" y="150" width="92" height="64" rx="10" fill="#fdecec" stroke="#E60012"/>
+      <text class="t" x="736" y="174" style="font-size:11px">AI 接口</text>
+      <text class="s" x="736" y="192" style="font-size:9.5px">OpenAI 兼容</text>
+
+      <!-- edges -->
+      <path class="edge" d="M180,86 L210,150" marker-end="url(#arrow)"/>
+      <path class="edge" d="M620,86 L605,150" marker-end="url(#arrow)"/>
+      <path class="edge" d="M360,182 L470,182" marker-end="url(#arrow)"/>
+      <text class="lbl" x="415" y="176">copyGuard 消息</text>
+      <path class="edge" d="M210,214 L210,280" marker-end="url(#arrow)"/>
+      <path class="edge" d="M605,214 L605,280" marker-end="url(#arrow)"/>
+      <path class="edge" d="M210,344 L210,400" marker-end="url(#arrow)"/>
+      <path class="edge" d="M605,344 L605,400" marker-end="url(#arrow)"/>
+      <path class="edge" d="M360,182 L690,182" marker-end="url(#arrow)" stroke-dasharray="4 3"/>
+      <text class="lbl" x="540" y="176">fetch 调用</text>
+    </svg>
+    <div class="legend">
+      <span><i class="dot" style="background:#e8f0fe"></i>用户界面</span>
+      <span><i class="dot" style="background:#f0eefa"></i>业务核心</span>
+      <span><i class="dot" style="background:#e7f3ec"></i>后台服务</span>
+      <span><i class="dot" style="background:#fef3e2"></i>内容脚本</span>
+      <span><i class="dot" style="background:#fdecec"></i>外部 AI 接口</span>
+    </div>
+  </div>
+
+  <!-- ============ 2. 核心生成流程 ============ -->
+  <div class="section">
+    <h2>二、核心生成流程（generate）</h2>
+    <svg viewBox="0 0 800 760" role="img" aria-label="生成流程">
+      <defs>
+        <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#94a3b8"/>
+        </marker>
+        <style>
+          .n { fill:#fff; stroke:#94a3b8; stroke-width:1.4; }
+          .nt { font-size:12.5px; fill:#1e293b; font-weight:600; text-anchor:middle; }
+          .ns { font-size:10.5px; fill:#475569; text-anchor:middle; }
+          .d { fill:#fdecec; stroke:#E60012; stroke-width:1.4; }
+          .dt { font-size:12px; fill:#b91c1c; font-weight:600; text-anchor:middle; }
+          .start { fill:#e8f0fe; stroke:#3b6ea5; }
+          .end { fill:#e7f3ec; stroke:#7cae91; }
+          .e { stroke:#94a3b8; stroke-width:1.4; fill:none; }
+          .el { font-size:10px; fill:#94a3b8; text-anchor:middle; }
+          .err { fill:#fdecec; stroke:#E60012; stroke-dasharray:4 3; }
+          .ert { font-size:10px; fill:#b91c1c; text-anchor:middle; }
+        </style>
+      </defs>
+
+      <!-- ① Start -->
+      <rect class="n start" x="250" y="24" width="300" height="50" rx="12"/>
+      <text class="nt" x="400" y="46">① 用户输入</text>
+      <text class="ns" x="400" y="63">粘贴 JD / 上传简历（本地解析 TXT·MD·PDF·DOCX）</text>
+      <path class="e" d="M400,74 L400,96" marker-end="url(#a2)"/>
+
+      <!-- ② validate -->
+      <rect class="n" x="200" y="96" width="400" height="48" rx="10"/>
+      <text class="nt" x="400" y="118">② 参数校验</text>
+      <text class="ns" x="400" y="135">面试：JD≥20字 · 打招呼/优化：JD + 简历</text>
+      <path class="e" d="M400,144 L400,166" marker-end="url(#a2)"/>
+
+      <!-- ③ settings -->
+      <rect class="n" x="230" y="166" width="340" height="44" rx="10"/>
+      <text class="nt" x="400" y="193">③ 读取本地设置 apiUrl / apiKey / model</text>
+      <path class="e" d="M400,210 L400,248" marker-end="url(#a2)"/>
+
+      <!-- ④ decision -->
+      <polygon class="d" points="400,248 500,288 400,328 300,288"/>
+      <text class="dt" x="400" y="292">④ 已配置 API？</text>
+      <!-- 否 -->
+      <path class="e" d="M300,288 L150,288" marker-end="url(#a2)"/>
+      <text class="el" x="228" y="280">否</text>
+      <!-- 是 -->
+      <path class="e" d="M400,328 L400,360" marker-end="url(#a2)"/>
+      <text class="el" x="412" y="348">是</text>
+
+      <!-- ⑤a fallback -->
+      <rect class="n" x="50" y="263" width="200" height="50" rx="10" fill="#f1f5f9"/>
+      <text class="nt" x="150" y="285">⑤a 本地演示 fallback</text>
+      <text class="ns" x="150" y="302">未配置时展示样例内容</text>
+      <path class="e" d="M150,313 L150,604 L190,604" marker-end="url(#a2)"/>
+      <text class="el" x="120" y="470">回退</text>
+
+      <!-- ⑤b build prompt -->
+      <rect class="n" x="200" y="360" width="400" height="52" rx="10" fill="#f0eefa" stroke="#8b7fd6"/>
+      <text class="nt" x="400" y="382">⑤b 构建 Prompt 列表</text>
+      <text class="ns" x="400" y="399">面试：jd-analysis + interview-prep 两步 · 其余单步</text>
+      <path class="e" d="M400,412 L400,438" marker-end="url(#a2)"/>
+
+      <!-- ⑥ callApi -->
+      <rect class="n" x="170" y="438" width="460" height="56" rx="10"/>
+      <text class="nt" x="400" y="460">⑥ callApi：fetch POST → /chat/completions</text>
+      <text class="ns" x="400" y="477">OpenAI 兼容 · DeepSeek 强制 thinking:{type:'disabled'}</text>
+      <text class="ns" x="400" y="492">多步顺序请求，AbortController 支持取消</text>
+      <path class="e" d="M400,494 L400,520" marker-end="url(#a2)"/>
+
+      <!-- error branch -->
+      <path class="e" d="M630,466 L700,466" marker-end="url(#a2)" stroke="#E60012" stroke-dasharray="4 3"/>
+      <text class="el" x="665" y="458" style="fill:#b91c1c">异常</text>
+      <rect class="err" x="640" y="478" width="150" height="46" rx="10"/>
+      <text class="ert" x="715" y="498">API 错误 / 空内容</text>
+      <text class="ert" x="715" y="514">（reasoning 检测）</text>
+
+      <!-- ⑦ parse -->
+      <rect class="n" x="220" y="520" width="360" height="48" rx="10"/>
+      <text class="nt" x="400" y="542">⑦ parseSections 解析</text>
+      <text class="ns" x="400" y="559">按 `## ` 标题分块 · 列表/段落识别</text>
+      <path class="e" d="M400,568 L400,594" marker-end="url(#a2)"/>
+
+      <!-- ⑧ render + save -->
+      <rect class="n" x="190" y="594" width="420" height="50" rx="10" fill="#e7f3ec" stroke="#7cae91"/>
+      <text class="nt" x="400" y="616">⑧ renderSections 渲染 + saveResults 存 session</text>
+      <text class="ns" x="400" y="633">清洗标记 · 板块折叠/复制按钮</text>
+      <path class="e" d="M400,644 L400,672" marker-end="url(#a2)"/>
+
+      <!-- ⑨ end -->
+      <rect class="n end" x="250" y="672" width="300" height="50" rx="12"/>
+      <text class="nt" x="400" y="694">⑨ 结果展示</text>
+      <text class="ns" x="400" y="711">复制全部 / 单块复制 / 折叠 / 取消重生成</text>
+    </svg>
+    <div class="note">
+      关键设计：<b>纯文本分块解析</b>（按 <code>##</code> 标题），不依赖 JSON；<b>截断双保险</b>——Prompt 限字数 + max_tokens 兜底（面试2500 / 准备4000 / 打招呼800 / 优化5000）；<b>DeepSeek 必须关闭思考模式</b>，否则思考过程吃光额度导致正文为空。
+    </div>
+  </div>
+
+  <!-- ============ 3. 复制保护机制 ============ -->
+  <div class="section">
+    <h2>三、网页复制保护机制流程</h2>
+    <svg viewBox="0 0 800 520" role="img" aria-label="复制保护流程">
+      <defs>
+        <marker id="a3" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#94a3b8"/>
+        </marker>
+        <style>
+          .n { fill:#fff; stroke:#94a3b8; stroke-width:1.4; }
+          .nt { font-size:12.5px; fill:#1e293b; font-weight:600; text-anchor:middle; }
+          .ns { font-size:10.5px; fill:#475569; text-anchor:middle; }
+          .act { fill:#fef3e2; stroke:#e0a458; }
+          .e { stroke:#94a3b8; stroke-width:1.4; fill:none; }
+          .el { font-size:10px; fill:#94a3b8; text-anchor:middle; }
+        </style>
+      </defs>
+
+      <!-- start -->
+      <rect class="n" x="240" y="20" width="320" height="46" rx="10" fill="#e8f0fe" stroke="#3b6ea5"/>
+      <text class="nt" x="400" y="48">侧边栏打开 · popup 建立长连接 port 'sidePanel'</text>
+      <path class="e" d="M400,66 L400,92" marker-end="url(#a3)"/>
+
+      <!-- setCopyGuard(true) -->
+      <rect class="n act" x="240" y="92" width="320" height="44" rx="10"/>
+      <text class="nt" x="400" y="119">setCopyGuard(true) → 发 copyGuard:enable</text>
+      <path class="e" d="M400,136 L400,162" marker-end="url(#a3)"/>
+
+      <!-- background enableForActiveTab -->
+      <rect class="n" x="200" y="162" width="400" height="48" rx="10"/>
+      <text class="nt" x="400" y="184">background.enableForActiveTab()</text>
+      <text class="ns" x="400" y="201">仅向「当前活跃标签页」发 copyGuard:set = true</text>
+      <path class="e" d="M400,210 L400,236" marker-end="url(#a3)"/>
+
+      <!-- two worlds -->
+      <rect class="n act" x="60" y="236" width="320" height="64" rx="10"/>
+      <text class="nt" x="220" y="260">MAIN 世界 copy-guard-main.js</text>
+      <text class="ns" x="220" y="278">重写 Event.prototype.preventDefault</text>
+      <text class="ns" x="220" y="293">放行 copy/cut/selectstart/ctrl+c·x·a</text>
+
+      <rect class="n act" x="420" y="236" width="320" height="64" rx="10"/>
+      <text class="nt" x="580" y="260">ISOLATED 世界 copy-guard.js</text>
+      <text class="ns" x="580" y="278">移除页面 oncopy/onselectstart/oncontextmenu</text>
+      <text class="ns" x="580" y="293">注入 user-select:text !important CSS</text>
+
+      <path class="e" d="M400,210 L220,236" marker-end="url(#a3)" stroke-dasharray="2 2"/>
+      <path class="e" d="M400,210 L580,236" marker-end="url(#a3)" stroke-dasharray="2 2"/>
+      <text class="el" x="300" y="222">消息广播</text>
+
+      <path class="e" d="M220,300 L220,330" marker-end="url(#a3)"/>
+      <path class="e" d="M580,300 L580,330" marker-end="url(#a3)"/>
+
+      <!-- user copies -->
+      <rect class="n" x="60" y="330" width="320" height="44" rx="10" fill="#e7f3ec" stroke="#7cae91"/>
+      <text class="nt" x="220" y="357">用户自由复制网页参考资料 ✓</text>
+      <rect class="n" x="420" y="330" width="320" height="44" rx="10" fill="#e7f3ec" stroke="#7cae91"/>
+      <text class="nt" x="580" y="357">页面拦截器已失效 ✓</text>
+
+      <!-- close branch -->
+      <path class="e" d="M220,374 L220,420 L400,420" marker-end="url(#a3)"/>
+      <path class="e" d="M580,374 L580,420 L400,420" marker-end="url(#a3)"/>
+      <rect class="n" x="200" y="420" width="400" height="48" rx="10" fill="#fdecec" stroke="#E60012"/>
+      <text class="nt" x="400" y="442" style="fill:#b91c1c">侧边栏关闭 · port.onDisconnect 触发</text>
+      <text class="ns" x="400" y="459">background.disableEverywhere() → 全部标签 apply(false)</text>
+      <path class="e" d="M400,468 L400,494" marker-end="url(#a3)"/>
+      <rect class="n" x="240" y="494" width="320" height="40" rx="10"/>
+      <text class="nt" x="400" y="519">复制保护结束（仅侧边栏期间生效）</text>
+    </svg>
+    <div class="note">
+      设计要点：双世界协同——MAIN 世界直接改写原型方法<b>兜底放行</b>，ISOLATED 世界清理页面注入的拦截器并注入 CSS；<b>作用域限定当前活跃标签 + 侧边栏生命周期</b>，关闭即还原，不影响其他页面。
+    </div>
+  </div>
+
+  <!-- ============ 4. 存储分层 ============ -->
+  <div class="section">
+    <h2>四、数据存储分层</h2>
+    <svg viewBox="0 0 800 240" role="img" aria-label="存储分层">
+      <defs>
+        <marker id="a4" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#94a3b8"/>
+        </marker>
+        <style>
+          .n { fill:#fff; stroke:#94a3b8; stroke-width:1.4; }
+          .nt { font-size:13px; fill:#1e293b; font-weight:600; text-anchor:middle; }
+          .ns { font-size:10.5px; fill:#475569; text-anchor:middle; }
+          .e { stroke:#94a3b8; stroke-width:1.4; fill:none; }
+        </style>
+      </defs>
+
+      <rect class="n" x="60" y="40" width="320" height="90" rx="12" fill="#e8f0fe" stroke="#3b6ea5"/>
+      <text class="nt" x="220" y="70">storage.local（磁盘持久）</text>
+      <text class="ns" x="220" y="92">apiUrl · apiKey · model</text>
+      <text class="ns" x="220" y="110" style="fill:#3b6ea5">API 密钥长期保存，不上传服务器</text>
+
+      <rect class="n" x="420" y="40" width="320" height="90" rx="12" fill="#fef3e2" stroke="#e0a458"/>
+      <text class="nt" x="580" y="70">storage.session（内存级）</text>
+      <text class="ns" x="580" y="92">savedJob · savedResumeText</text>
+      <text class="ns" x="580" y="110">savedResults · generationInProgress</text>
+
+      <path class="e" d="M380,85 L420,85" marker-end="url(#a4)"/>
+      <text class="ns" x="400" y="78" style="fill:#94a3b8">浏览器关闭后自动清空</text>
+
+      <rect class="n" x="420" y="170" width="320" height="44" rx="10"/>
+      <text class="ns" x="580" y="185">关闭侧边栏 → 内容保留</text>
+      <text class="ns" x="580" y="202">关闭浏览器 → 全部清空（隐私优先）</text>
+    </svg>
+  </div>
+
+  <footer>面邀收割机 v1.0.6 · 流程图依据源码（manifest / background / popup / copy-guard / prompts / options）生成</footer>
+</div>
+</body>
+</html>

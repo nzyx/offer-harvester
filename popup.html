@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>面邀收割机</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand-mark"><img src="assets/Offer-PC.png" alt="" width="28" height="28"></div>
+      <div>
+        <p class="eyebrow">面邀收割机</p>
+        <h1>把岗位描述变成你的准备清单</h1>
+        <p class="panel-hint">在设置中添加你的API即可连接你的AI模型</p>
+      </div>
+      <a class="settings-link" href="options.html" target="_blank">设置</a>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" type="button" data-tab="analysis" role="tab" aria-selected="true" aria-controls="tab-analysis">岗位分析</button>
+      <button class="tab" type="button" data-tab="resume" role="tab" aria-selected="false" aria-controls="tab-resume">简历工具</button>
+    </nav>
+
+    <!-- 岗位分析 -->
+    <div class="tab-panel" id="tab-analysis" role="tabpanel" aria-labelledby="tab-analysis">
+      <section class="workspace">
+        <div class="step-heading">
+          <span class="step-num">01</span>
+          <div class="step-text">
+            <h2>粘贴岗位职责</h2>
+            <p class="step-sub">把 JD 粘进来，越完整生成越准</p>
+          </div>
+          <button id="cancel-button" class="cancel-button" type="button" hidden>取消生成</button>
+        </div>
+        <div class="textarea-wrap">
+          <textarea id="job-description" maxlength="12000" placeholder="粘贴职位名称、岗位职责和任职要求。越完整，生成内容越贴近岗位。"></textarea>
+          <button id="clear-job" class="clear-job" type="button" aria-label="清空岗位职责" title="清空">×</button>
+        </div>
+        <div class="input-footer">
+          <span id="word-count">0 / 12000</span>
+          <span>不会自动上传到任何招聘网站</span>
+        </div>
+        <div class="action-row">
+          <button id="analyze-button" class="button button-primary">分析岗位并生成面试准备</button>
+        </div>
+        <div id="generating-status" class="generating-status" hidden aria-live="polite">
+          <span class="generation-mark"></span>
+          <div>
+            <strong id="generation-model"></strong>
+            <p id="generation-message"></p>
+          </div>
+        </div>
+        <p id="status-message" class="status-message"></p>
+      </section>
+
+      <section id="empty-state" class="empty-state">
+        <div class="empty-line"></div>
+        <div class="empty-line short"></div>
+        <p>填好岗位描述后，这里会生成针对性的准备内容。</p>
+        <p>生成结果后，可在右上角点「导出 HTML」保存为可分享的可视化网页。</p>
+      </section>
+
+      <section id="interview-results" class="results" hidden>
+        <div class="result-header">
+          <div>
+            <p class="eyebrow">生成结果</p>
+            <h2>岗位分析与面试准备</h2>
+          </div>
+          <div class="result-actions">
+            <button class="text-button copy-interview" hidden>复制全部</button>
+            <button class="text-button export export-interview" hidden>导出 HTML</button>
+          </div>
+        </div>
+        <div id="interview-content"></div>
+      </section>
+    </div>
+
+    <!-- 简历工具 -->
+    <div class="tab-panel" id="tab-resume" role="tabpanel" aria-labelledby="tab-resume" hidden>
+      <section class="workspace resume-workspace">
+        <div class="step-heading">
+          <span class="step-num">02</span>
+          <div class="step-text">
+            <h2>补充你的简历</h2>
+            <p class="step-sub">上传简历，生成打招呼语与优化稿</p>
+          </div>
+          <button id="resume-cancel-button" class="cancel-button" type="button" hidden>取消生成</button>
+        </div>
+        <label class="upload-zone" for="resume-file">
+          <input id="resume-file" type="file" accept=".txt,.md,.pdf,.doc,.docx" hidden>
+          <span class="upload-icon" id="upload-icon">↑</span>
+          <span class="upload-text">
+            <strong id="file-label">上传简历</strong>
+            <small>支持 TXT、MD、PDF、DOCX</small>
+          </span>
+          <button id="clear-resume" class="clear-resume" type="button" aria-label="删除已上传简历" title="删除">×</button>
+        </label>
+        <p class="file-note" id="file-note"></p>
+        <div class="action-row">
+          <button id="greeting-button" class="button button-primary">生成打招呼语</button>
+          <button id="resume-button" class="button button-secondary">优化简历</button>
+        </div>
+        <div id="resume-generating-status" class="generating-status" hidden aria-live="polite">
+          <span class="generation-mark"></span>
+          <div>
+            <strong id="resume-generation-model"></strong>
+            <p id="resume-generation-message"></p>
+          </div>
+        </div>
+        <p id="resume-status" class="status-message"></p>
+      </section>
+
+      <section id="greeting-results" class="results" hidden>
+        <div class="result-header">
+          <div>
+            <p class="eyebrow">生成结果</p>
+            <h2>打招呼语</h2>
+          </div>
+          <div class="result-actions">
+            <button class="text-button copy-greeting" hidden>复制全部</button>
+            <button class="text-button export export-greeting" hidden>导出 HTML</button>
+          </div>
+        </div>
+        <div id="greeting-content"></div>
+      </section>
+
+      <section id="optimize-results" class="results" hidden>
+        <div class="result-header">
+          <div>
+            <p class="eyebrow">生成结果</p>
+            <h2>简历优化</h2>
+          </div>
+          <div class="result-actions">
+            <button class="text-button copy-optimize" hidden>复制全部</button>
+            <button class="text-button export export-optimize" hidden>导出 HTML</button>
+          </div>
+        </div>
+        <div id="optimize-content"></div>
+      </section>
+    </div>
+
+    <footer class="app-footer">
+      <span id="copy-state">网页复制保护正在解除…</span>
+    </footer>
+  </main>
+
+  <template id="loading-template">
+    <div class="loading-card"><i></i><i></i><i></i></div>
+  </template>
+
+  <script src="lib/pdf.min.js"></script>
+  <script src="lib/mammoth.min.js"></script>
+  <script src="common.js"></script>
+  <script src="prompts.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
