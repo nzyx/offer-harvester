@@ -19,6 +19,7 @@
     </header>
 
     <!-- 步骤条：可自由点击回看任意一步 -->
+    <p style="margin:10px 0 0;padding:9px 12px;border:1px solid #ECECEC;border-left:3px solid #E60012;border-radius:8px;background:#FAFAFA;font-size:12px;line-height:1.6;color:#2B2B2B">静态预览：实际使用时三步依次展开，走过的步骤收成一行摘要（第 2 步这里就是折叠态）。</p>
     <nav class="steps" id="step-nav" aria-label="流程步骤">
       <button class="step-chip is-active" type="button" data-step="resume" aria-current="step">
         <span class="step-chip-num">01</span>
@@ -44,12 +45,12 @@
           <h2>上传你的简历</h2>
           <p class="step-sub">先传简历，解析成标准字段，后面的产出与网申预填都用它</p>
         </div>
-        <span class="step-tag" id="step-resume-tag">可选</span>
+        <span class="step-tag is-ok" id="step-resume-tag">已填写</span>
       </div>
 
       <div class="step-body">
         <label class="upload-zone" for="resume-file">
-          <input id="resume-file" type="file" accept=".txt,.md,.pdf,.doc,.docx" hidden>
+          <input id="resume-file" type="file" accept=".txt,.md,.pdf,.doc,.docx">
           <span class="upload-icon" id="upload-icon">↑</span>
           <span class="upload-text">
             <strong id="file-label">上传简历</strong>
@@ -60,23 +61,23 @@
         <p class="file-note" id="file-note"></p>
 
         <!-- 结构化简历：网申预填的数据源，也是后续产出的统一输入 -->
-        <section id="profile-panel" class="profile-panel" hidden>
+        <section id="profile-panel" class="profile-panel">
           <div class="profile-head">
             <div class="profile-head-text">
               <p class="eyebrow">结构化简历</p>
-              <p class="profile-summary" id="profile-summary">尚未解析</p>
+              <p class="profile-summary" id="profile-summary">已填 18 项 · 教育 1 段 · 实习/工作 2 段 · 项目 1 个</p>
             </div>
             <div class="profile-head-action">
-              <span class="profile-state" id="profile-state" data-state="idle">待解析</span>
+              <span class="profile-state" id="profile-state" data-state="ready">已解析</span>
               <button id="profile-parse" class="text-button profile-parse" type="button">解析</button>
             </div>
           </div>
 
           <!-- 常驻说明：回答「数据在哪里」，视线始终与解析按钮同屏 -->
-          <p class="profile-where" id="profile-where">解析结果保存在本机，网申预填与后续生成都读它</p>
+          <p class="profile-where" id="profile-where">已存在本机，网申预填与后续生成都读它</p>
 
           <!-- 解析中（与结果横幅互斥，占同一块位置） -->
-          <div id="profile-progress" class="generating-status" hidden aria-live="polite">
+          <div id="profile-progress" class="generating-status" aria-live="polite">
             <span class="generation-mark"></span>
             <div>
               <strong id="profile-progress-model"></strong>
@@ -85,24 +86,68 @@
           </div>
 
           <!-- 结果横幅：成功 / 失败 / 提示，紧贴头部，不会被展开的字段挤到视野外 -->
-          <div id="profile-status" class="profile-result" data-kind="info" hidden aria-live="polite">
+          <div id="profile-status" class="profile-result" data-kind="info" aria-live="polite">
             <span class="profile-result-mark" aria-hidden="true"></span>
             <div class="profile-result-body">
-              <strong id="profile-status-title"></strong>
-              <p id="profile-status-detail"></p>
+              <strong id="profile-status-title">解析完成 · 已保存到本机 18 项</strong>
+              <p id="profile-status-detail">教育 1 段 · 实习/工作 2 段 · 项目 1 个｜未连接 AI，本次用本地规则解析。到「设置」连接 AI 后重新解析会更准更全。</p>
             </div>
           </div>
 
-          <div id="profile-body" hidden>
-            <div class="profile-meter" role="img" aria-label="信息完成度"><span id="profile-meter-bar"></span></div>
-            <div id="profile-groups" class="profile-groups"></div>
+          <div id="profile-body">
+            <div class="profile-meter" role="img" aria-label="信息完成度"><span id="profile-meter-bar" style="width:62%"></span></div>
+            <div id="profile-groups" class="profile-groups"><section class="pf-group"><div class="pf-group-head"><h4>基础信息<span class="pf-group-count">7/8</span></h4></div><div class="pf-rows">
+<div class="pf-row"><label>姓名</label><input class="pf-input" value="张三"></div>
+<div class="pf-row"><label>性别</label><input class="pf-input" value="男"></div>
+<div class="pf-row"><label>出生日期</label><input class="pf-input" value="2002.05"></div>
+<div class="pf-row"><label>手机号</label><input class="pf-input" value="13800000000"></div>
+<div class="pf-row"><label>邮箱</label><input class="pf-input" value="zhangsan@example.com"></div>
+<div class="pf-row"><label>现居城市</label><input class="pf-input" value="深圳"></div>
+<div class="pf-row"><label>籍贯</label><input class="pf-input" value="广东汕头"></div>
+<div class="pf-row"><label>生源地</label><input class="pf-input" value="广东汕头"></div>
+<div class="pf-row"><label>政治面貌</label><input class="pf-input" value="共青团员"></div>
+</div></section>
+<section class="pf-group"><div class="pf-group-head">
+<h4>求职意向<span class="pf-group-count">2/5</span></h4></div><div class="pf-rows">
+<div class="pf-row"><label>期望岗位</label><input class="pf-input" value="产品运营"></div>
+<div class="pf-row"><label>期望城市</label><input class="pf-input" value="深圳 / 广州"></div>
+<div class="pf-row"><label>期望薪资</label><input class="pf-input" value=""></div>
+<div class="pf-row"><label>到岗时间</label><input class="pf-input" value=""></div>
+<div class="pf-row"><label>求职类型</label><input class="pf-input" value=""></div>
+</div></section>
+<section class="pf-group"><div class="pf-group-head">
+<h4>教育经历<span class="pf-group-count">6/8</span></h4>
+<button class="pf-add" type="button" data-group="education">+ 添加一条</button></div>
+<article class="pf-item"><div class="pf-item-head"><span class="pf-item-idx">01</span><span class="pf-item-title">教育经历</span>
+<button class="pf-remove" type="button" title="删除这一条">×</button></div>
+<div class="pf-rows">
+<div class="pf-row"><label>学校</label><input class="pf-input" value="广东海洋大学"></div>
+<div class="pf-row"><label>专业</label><input class="pf-input" value="新闻学"></div>
+<div class="pf-row"><label>学历</label><input class="pf-input" value="本科"></div>
+<div class="pf-row"><label>开始时间</label><input class="pf-input" value="2022.09"></div>
+<div class="pf-row"><label>结束时间</label><input class="pf-input" value="2026.06"></div>
+<div class="pf-row"><label>GPA</label><input class="pf-input" value="3.7/4.0"></div>
+<div class="pf-row"><label>专业排名</label><input class="pf-input" value="专业前 20%"></div>
+<div class="pf-row"><label>主修课程</label><textarea class="pf-input" rows="2">数字电子技术、模拟电子技术、Python 程序设计</textarea></div>
+<div class="pf-row"><label>培养方式</label><input class="pf-input" value="全日制"></div>
+</div></article>
+</section>
+<section class="pf-group"><div class="pf-group-head">
+<h4>技能与补充<span class="pf-group-count">3/5</span></h4></div><div class="pf-rows">
+<div class="pf-row"><label>技能标签</label><input class="pf-input" value="SQL、Figma、内容运营"></div>
+<div class="pf-row"><label>语言等级</label><input class="pf-input" value="英语 CET-6"></div>
+<div class="pf-row"><label>证书</label><input class="pf-input" value=""></div>
+<div class="pf-row"><label>荣誉奖项</label><textarea class="pf-input" rows="2">国家励志奖学金、校级三好学生</textarea></div>
+<div class="pf-row"><label>自我评价</label><textarea class="pf-input" rows="2"></textarea></div>
+<div class="pf-row"><label>作品 / 主页链接</label><input class="pf-input" value=""></div>
+</div></section></div>
             <label class="profile-toggle">
               <input type="checkbox" id="profile-sensitive">
               <span>显示敏感字段（身份证 / 银行卡 / 住址 / 紧急联系人）｜默认不写入网申页面</span>
             </label>
             <div class="profile-actions">
               <button id="profile-save" class="button button-secondary button-sm" type="button">保存修改</button>
-              <span class="profile-savestate" id="profile-savestate"></span>
+              <span class="profile-savestate" id="profile-savestate" data-kind="ok">已保存到本机</span>
               <button id="profile-clear" class="text-button" type="button">清空</button>
             </div>
           </div>
@@ -125,14 +170,14 @@
     </section>
 
     <!-- ─── 第 2 步：岗位 ─────────────────────────── -->
-    <section class="wizard-step" id="step-job" data-step="job" hidden>
+    <section class="wizard-step is-collapsed" id="step-job" data-step="job">
       <div class="step-heading">
         <span class="step-num">02</span>
         <div class="step-text">
           <h2>粘贴岗位描述</h2>
           <p class="step-sub">把 JD 粘进来，越完整生成越准</p>
         </div>
-        <span class="step-tag" id="step-job-tag">必填</span>
+        <span class="step-tag is-ok" id="step-job-tag">已填写</span>
       </div>
 
       <div class="step-body">
@@ -158,14 +203,14 @@
         </div>
       </div>
 
-      <div class="step-collapsed" id="step-job-collapsed" hidden>
-        <p class="step-collapsed-text" id="step-job-summary"></p>
+      <div class="step-collapsed" id="step-job-collapsed">
+        <p class="step-collapsed-text" id="step-job-summary">26 字 · 招聘产品运营，负责用户增长与数据分析…</p>
         <button class="text-button" id="step-job-edit" type="button">修改</button>
       </div>
     </section>
 
     <!-- ─── 第 3 步：产出 ─────────────────────────── -->
-    <section class="wizard-step" id="step-output" data-step="output" hidden>
+    <section class="wizard-step" id="step-output" data-step="output">
       <div class="step-heading">
         <span class="step-num">03</span>
         <div class="step-text">
@@ -182,7 +227,7 @@
               <strong>面试准备</strong>
               <small>岗位拆解 · 考察点 · 应对策略</small>
             </span>
-            <span class="output-state" id="state-interview"></span>
+            <span class="output-state is-ready" id="state-interview">可以生成</span>
           </button>
 
           <button id="greeting-button" class="output-card" type="button">
@@ -191,7 +236,7 @@
               <strong>打招呼语</strong>
               <small>针对岗位的开场消息，直接发给 HR</small>
             </span>
-            <span class="output-state" id="state-greeting"></span>
+            <span class="output-state" id="state-greeting">需先补简历</span>
           </button>
 
           <button id="resume-button" class="output-card" type="button">
@@ -200,7 +245,7 @@
               <strong>简历优化</strong>
               <small>按岗位关键词改写经历表达</small>
             </span>
-            <span class="output-state" id="state-optimize"></span>
+            <span class="output-state" id="state-optimize">需先补简历</span>
           </button>
 
           <button id="autofill-button" class="output-card" type="button">
@@ -209,36 +254,36 @@
               <strong>网申预填</strong>
               <small>把简历自动填进当前网申表单</small>
             </span>
-            <span class="output-state" id="state-autofill"></span>
+            <span class="output-state is-ready" id="state-autofill">可以填写</span>
           </button>
         </div>
 
         <!-- ─── 网申预填面板 ─────────────────────────── -->
-        <div id="autofill-panel" class="autofill-panel" hidden>
+        <div id="autofill-panel" class="autofill-panel">
           <div class="autofill-head">
             <div>
               <p class="eyebrow">网申预填</p>
-              <p class="autofill-site" id="autofill-site"></p>
+              <p class="autofill-site" id="autofill-site">app.mokahr.com</p>
             </div>
             <button id="autofill-rescan" class="text-button" type="button">重新扫描</button>
           </div>
 
-          <p class="autofill-summary" id="autofill-summary"></p>
+          <p class="autofill-summary" id="autofill-summary">扫描到 24 个可编辑控件 · 可自动填 15 项 · 需你处理 9 项</p>
 
-          <div class="autofill-block" id="autofill-fill-block" hidden>
+          <div class="autofill-block" id="autofill-fill-block">
             <div class="autofill-block-head">
               <h4>将填写</h4>
-              <span id="autofill-fill-count"></span>
+              <span id="autofill-fill-count">15 项</span>
             </div>
-            <div class="autofill-list" id="autofill-fill-list"></div>
+            <div class="autofill-list" id="autofill-fill-list"><div class="af-item"><span class="af-item-label">姓名</span><span class="af-item-meta"><span class="af-item-value">张三</span><span class="af-item-right">姓名</span></span></div><div class="af-item"><span class="af-item-label">手机号码</span><span class="af-item-meta"><span class="af-item-value">13800000000</span><span class="af-item-right">手机号</span></span></div><div class="af-item"><span class="af-item-label">电子邮箱</span><span class="af-item-meta"><span class="af-item-value">zhangsan@example.com</span><span class="af-item-right">邮箱</span></span></div><div class="af-item"><span class="af-item-label">性别</span><span class="af-item-meta"><span class="af-item-value">男</span><span class="af-item-right">性别</span></span></div><div class="af-item"><span class="af-item-label">期望岗位</span><span class="af-item-meta"><span class="af-item-value">产品运营</span><span class="af-item-right">期望岗位</span></span></div><div class="af-item"><span class="af-item-label">学校名称</span><span class="af-item-meta"><span class="af-item-value">广东海洋大学</span><span class="af-item-right">学校</span></span></div><div class="af-item"><span class="af-item-label">专业名称</span><span class="af-item-meta"><span class="af-item-value">新闻学</span><span class="af-item-right">专业</span></span></div><div class="af-item"><span class="af-item-label">最高学历</span><span class="af-item-meta"><span class="af-item-value">本科（全日制）</span><span class="af-item-right">学历</span></span><span class="af-item-sub">选项按近似匹配为「本科（全日制）」，请核对</span></div><div class="af-item"><span class="af-item-label">入学时间</span><span class="af-item-meta"><span class="af-item-value">2022-09</span><span class="af-item-right">入学时间</span></span></div><div class="af-item"><span class="af-item-label">公司名称</span><span class="af-item-meta"><span class="af-item-value">鹅创营</span><span class="af-item-right">公司</span></span></div><div class="af-item"><span class="af-item-label">职位名称</span><span class="af-item-meta"><span class="af-item-value">产品实习生</span><span class="af-item-right">职位</span></span></div></div>
           </div>
 
-          <div class="autofill-block" id="autofill-manual-block" hidden>
+          <div class="autofill-block" id="autofill-manual-block">
             <div class="autofill-block-head">
               <h4>需你手动处理</h4>
-              <span id="autofill-manual-count"></span>
+              <span id="autofill-manual-count">9 项</span>
             </div>
-            <div class="autofill-list" id="autofill-manual-list"></div>
+            <div class="autofill-list" id="autofill-manual-list"><div class="af-item"><span class="af-item-label">身份证号</span><span class="af-item-meta"><span class="af-item-value">敏感字段</span></span><span class="af-item-sub">默认不写入网申页面。需要时打开敏感字段开关后重试。</span></div><div class="af-item"><span class="af-item-label">现居住城市</span><span class="af-item-meta"><span class="af-item-value">已有内容</span></span><span class="af-item-sub">页面上这项已经有内容，未覆盖。</span></div><div class="af-item"><span class="af-item-label">上传简历附件</span><span class="af-item-meta"><span class="af-item-value">文件上传</span></span><span class="af-item-sub">浏览器不允许脚本写入文件，请手动选择文件。</span></div><div class="af-item"><span class="af-item-label">期望城市</span><span class="af-item-meta"><span class="af-item-value">自定义下拉框</span></span><span class="af-item-sub">这类下拉框由页面脚本模拟，写入不会生效，请手动选择。</span></div><div class="af-item"><span class="af-item-label">开始时间</span><span class="af-item-meta"><span class="af-item-value">含义不明确</span></span><span class="af-item-sub">这个字段可能对应多项信息，为避免填错请手动确认。</span></div><div class="af-item"><span class="af-item-label">兴趣爱好</span><span class="af-item-meta"><span class="af-item-value">未能识别</span></span><span class="af-item-sub">无法判断这个字段该填什么，请手动填写。</span></div></div>
           </div>
 
           <div class="autofill-options">
@@ -257,29 +302,29 @@
             <button id="autofill-clear" class="text-button" type="button">清除页面标记</button>
           </div>
 
-          <p id="autofill-status" class="status-message"></p>
+          <p id="autofill-status" class="status-message">仅用本地规则识别；填写位置会用红框标出，请核对后自行提交。</p>
           <p class="autofill-note">只写入表单，不会点击任何提交按钮。填写位置会用红框标出，请核对后自行提交。</p>
 
           <!-- 某个字段没填上时的自查入口：导出每个控件的原始特征与跳过原因 -->
           <button id="autofill-detail" class="text-button autofill-detail" type="button">有字段没填上？导出诊断详情</button>
         </div>
 
-        <div id="generating-status" class="generating-status" hidden aria-live="polite">
+        <div id="generating-status" class="generating-status" aria-live="polite">
           <span class="generation-mark"></span>
           <div>
             <strong id="generation-model"></strong>
             <p id="generation-message"></p>
           </div>
-          <button id="cancel-button" class="cancel-button" type="button" hidden>取消</button>
+          <button id="cancel-button" class="cancel-button" type="button">取消</button>
         </div>
 
-        <div id="resume-generating-status" class="generating-status" hidden aria-live="polite">
+        <div id="resume-generating-status" class="generating-status" aria-live="polite">
           <span class="generation-mark"></span>
           <div>
             <strong id="resume-generation-model"></strong>
             <p id="resume-generation-message"></p>
           </div>
-          <button id="resume-cancel-button" class="cancel-button" type="button" hidden>取消</button>
+          <button id="resume-cancel-button" class="cancel-button" type="button">取消</button>
         </div>
 
         <p id="status-message" class="status-message"></p>
@@ -295,43 +340,43 @@
       <p>生成结果后可「导出 HTML」，保存成可分享的精美网页。</p>
     </section>
 
-    <section id="interview-results" class="results" hidden>
+    <section id="interview-results" class="results">
       <div class="result-header">
         <div>
           <p class="eyebrow">生成结果</p>
           <h2>岗位分析与面试准备</h2>
         </div>
         <div class="result-actions">
-          <button class="text-button copy-interview" hidden>复制全部</button>
-          <button class="text-button export export-interview" hidden>导出 HTML</button>
+          <button class="text-button copy-interview">复制全部</button>
+          <button class="text-button export export-interview">导出 HTML</button>
         </div>
       </div>
       <div id="interview-content"></div>
     </section>
 
-    <section id="greeting-results" class="results" hidden>
+    <section id="greeting-results" class="results">
       <div class="result-header">
         <div>
           <p class="eyebrow">生成结果</p>
           <h2>打招呼语</h2>
         </div>
         <div class="result-actions">
-          <button class="text-button copy-greeting" hidden>复制全部</button>
-          <button class="text-button export export-greeting" hidden>导出 HTML</button>
+          <button class="text-button copy-greeting">复制全部</button>
+          <button class="text-button export export-greeting">导出 HTML</button>
         </div>
       </div>
       <div id="greeting-content"></div>
     </section>
 
-    <section id="optimize-results" class="results" hidden>
+    <section id="optimize-results" class="results">
       <div class="result-header">
         <div>
           <p class="eyebrow">生成结果</p>
           <h2>简历优化</h2>
         </div>
         <div class="result-actions">
-          <button class="text-button copy-optimize" hidden>复制全部</button>
-          <button class="text-button export export-optimize" hidden>导出 HTML</button>
+          <button class="text-button copy-optimize">复制全部</button>
+          <button class="text-button export export-optimize">导出 HTML</button>
         </div>
       </div>
       <div id="optimize-content"></div>
@@ -346,13 +391,13 @@
     <div class="loading-card"><i></i><i></i><i></i></div>
   </template>
 
-  <script src="lib/pdf.min.js"></script>
-  <script src="lib/mammoth.min.js"></script>
-  <script src="common.js"></script>
-  <script src="profile.js"></script>
-  <script src="resume-text.js"></script>
-  <script src="form-fill.js"></script>
-  <script src="prompts.js"></script>
-  <script src="popup.js"></script>
+  
+  
+  
+  
+  
+  
+  
+  
 </body>
 </html>

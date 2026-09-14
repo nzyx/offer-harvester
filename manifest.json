@@ -2,8 +2,8 @@
     "manifest_version": 3,
     "minimum_chrome_version": "114",
     "name": "面邀收割机",
-    "version": "1.0.6",
-    "description": "面邀收割机：粘贴岗位JD即可自动生成面试准备方案、高频问题预测、自我介绍定制和现场技巧。支持简历上传与AI优化，支持OpenAI/DeepSeek/Kimi/GLM/通义千问/豆包/Claude等多种AI服务。所有数据本地存储，不上传任何个人信息。",
+    "version": "1.5.3",
+    "description": "面邀收割机：粘贴岗位JD即可自动生成面试准备方案、高频问题预测、自我介绍定制和现场技巧。上传简历自动解析成六组标准字段并可一键预填进任意网申表单（只填不提交），能正确识别校招简历的真实排版（时间+公司+职位同行、小标题要点式经历）。支持OpenAI/DeepSeek/Kimi/GLM/通义千问/豆包/Claude等多种AI服务，数据本地存储。",
     "action": {
         "default_title": "打开面邀收割机",
         "default_icon": "assets/Offer-PC.png"
@@ -46,6 +46,29 @@
             ],
             "run_at": "document_start",
             "all_frames": true
+        },
+        {
+            "matches": [
+                "http://*/*",
+                "https://*/*"
+            ],
+            "js": [
+                "jd-extract.js",
+                "jd-grab.js"
+            ],
+            "run_at": "document_start",
+            "all_frames": false
+        },
+        {
+            "matches": [
+                "http://*/*",
+                "https://*/*"
+            ],
+            "js": [
+                "form-fill-page.js"
+            ],
+            "run_at": "document_start",
+            "all_frames": false
         }
     ],
     "options_page": "options.html",

@@ -21,6 +21,35 @@ let activeRequests = {};
 let activeResumeModes = new Set();
 let resumeModelName = '';
 
+// 抓取 JD 状态（同样需提前声明：updateJobControls 会在顶层被立即调用，其中会读 grabUndo）
+let grabUndo = null;    // { previous, grabbed }：抓取覆盖前的原文，供撤销
+let grabBusy = false;
+
+// 结构化简历状态（提前声明：loadMemory 的存储回调会读取 profile）
+let profile = null;
+let profileParsing = false;
+let profileTimer = null;
+let profileFromCache = false;   // AI 语义映射的行式缓存：同一页面重复扫描时不再请求
+
+// 网申预填状态（提前声明：refreshAutofillAvailability 会在顶层被立即调用）
+let autofillScan = null;        // 最近一次扫描结果 { fields, site, url, ... }
+let autofillPlan = null;        // 最近一次填写计划（含 items 与 manual）
+let autofillBusy = false;
+let autofillAiFailed = false;   // AI 映射失败过 → 提示用户，并允许手动重试
+let autofillProgressTimer = null;
+
+// 向导状态（同样需提前声明：loadMemory 的存储回调会调用 renderWizard 同步求值）
+const WIZARD_ORDER = ['resume', 'job', 'output'];
+const wizard = { step: 'resume', visited: {}, skippedResume: false };
+
+// 产出卡与它们各自的前置条件（单一真相：HTML 里不再重复写一遍）
+const OUTPUT_CARDS = [
+  { id: 'analyze-button', stateId: 'state-interview', need: ['job'] },
+  { id: 'greeting-button', stateId: 'state-greeting', need: ['job', 'resume'] },
+  { id: 'resume-button', stateId: 'state-optimize', need: ['job', 'resume'] },
+  { id: 'autofill-button', stateId: 'state-autofill', need: ['resume'] }
+];
+
 // ── 防重复提交：同模式生成中忽略再次点击 ──────
 const generating = { interview: false, greeting: false, optimize: false };
 const MODE_BTN = { interview: 'analyze-button', greeting: 'greeting-button', optimize: 'resume-button' };
@@ -166,7 +195,8 @@ function saveMemory() {
   chrome.storage.session.set({
     savedJob: jobInput.value,
     savedResumeText: resumeText,
-    savedResumeFileName: $('file-label').textContent !== '上传简历' ? $('file-label').textContent : ''
+    savedResumeFileName: $('file-label').textContent !== '上传简历' ? $('file-label').textContent : '',
+    wizardStep: wizard.step
   });
 }
 
@@ -179,7 +209,12 @@ function saveResults(mode, sections) {
 }
 
 function loadMemory() {
-  chrome.storage.session.get(['savedJob', 'savedResumeText', 'savedResumeFileName', 'generationInProgress', 'savedResults'], (data) => {
+  chrome.storage.session.get(['savedJob', 'savedResumeText', 'savedResumeFileName', 'generationInProgress', 'savedResults', 'wizardStep'], (data) => {
+    // 回到上次所在的步骤：关侧边栏重开不丢进度，中断提示也才出现在用户看得见的那一步
+    if (WIZARD_ORDER.includes(data.wizardStep)) {
+      wizard.step = data.wizardStep;
+      wizard.visited[data.wizardStep] = true;
+    }
     if (data.savedJob) {
       jobInput.value = data.savedJob;
       updateJobControls();
@@ -191,6 +226,12 @@ function loadMemory() {
         $('file-note').textContent = `已加载 ${resumeText.length} 个字符（上次上传）`;
       }
     }
+    refreshProfileVisibility();
+    // 老用户迁移提示：有简历原文但没有结构化信息 → 明确告知可一键重建，不静默丢弃。
+    // 若结构化数据在本机存储里（initProfile 稍后恢复），下面这行会被 refreshProfileVisibility 覆盖为正确文案。
+    if (!profile && resumeText) {
+      $('profile-hint').textContent = '检测到已上传的简历，但还没有结构化信息。点「解析」即可生成，用于网申自动预填。';
+    }
     if (data.generationInProgress) {
       $('status-message').textContent = '上次生成被中断（关闭侧边栏会导致生成中断），内容已恢复，请重新生成。';
       chrome.storage.session.remove('generationInProgress');
@@ -200,6 +241,8 @@ function loadMemory() {
       if (data.savedResults.greeting) renderSections(data.savedResults.greeting, 'greeting');
       if (data.savedResults.optimize) renderSections(data.savedResults.optimize, 'optimize');
     }
+    // 结果恢复完再刷一次：步骤条上的「产出」完成态依赖 lastSections
+    renderWizard();
   });
 }
 
@@ -210,6 +253,10 @@ loadMemory();
 function updateJobControls() {
   $('word-count').textContent = `${jobInput.value.length} / 12000`;
   $('clear-job').hidden = !jobInput.value.length;
+  // 用户开始补内容后，之前那句「请先填写」就该消失
+  if ($('job-step-status').textContent) $('job-step-status').textContent = '';
+  renderWizard();
+  syncGrabUndo();
 }
 
 const saveMemoryDebounced = debounce(saveMemory, 300);
@@ -247,6 +294,9 @@ updateJobControls();
 
 try { pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js'; } catch (e) { console.warn('PDF.js 未加载'); }
 
+// ⚠️ 行结构还原在 resume-text.js（纯算法层，可在 node 下测）。
+// pdf.js 只给片段坐标，不给「行」；直接 join(' ') 会把整页压成一行，
+// 导致「专业」被填成「手机号码」这类错位，项目经历整段消失。
 async function extractPdfText(file) {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument(buf).promise;
@@ -254,7 +304,7 @@ async function extractPdfText(file) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    pages.push(content.items.map(item => item.str).join(' '));
+    pages.push(rebuildPdfLines(content.items));
   }
   return pages.join('\n');
 }
@@ -285,13 +335,13 @@ $('resume-file').addEventListener('change', async (event) => {
 
   try {
     if (/\.(txt|md)$/i.test(file.name)) {
-      resumeText = await file.text();
+      resumeText = normalizeResumeText(await file.text());
     } else if (/\.pdf$/i.test(file.name)) {
-      resumeText = await extractPdfText(file);
+      resumeText = normalizeResumeText(await extractPdfText(file));
     } else if (/\.docx$/i.test(file.name)) {
       const buf = await file.arrayBuffer();
       const result = await mammoth.extractRawText({ arrayBuffer: buf });
-      resumeText = result.value;
+      resumeText = normalizeResumeText(result.value);
     } else {
       resumeText = `[用户上传了 ${file.name}，请将其作为简历附件参考。]`;
       $('file-note').textContent = '已附加文件。为获得更精准匹配，建议上传 TXT、MD、PDF 或 DOCX 格式的简历。';
@@ -303,9 +353,12 @@ $('resume-file').addEventListener('change', async (event) => {
     }
     $('file-note').textContent = `已读取 ${resumeText.length} 个字符，将用于匹配你的真实经历。`;
     saveMemory();
+    refreshProfileVisibility();
   } catch (e) {
-    resumeText = `[用户上传了 ${file.name}，但无法解析内容：${e.message}]`;
-    $('file-note').textContent = '文件解析失败，请尝试粘贴简历文本或上传 TXT 格式。';
+    // 解析失败不留无效文本：避免结构化解析与 AI 生成拿到脏输入
+    resumeText = '';
+    $('file-note').textContent = `文件解析失败（${e.message}），请改上传 TXT / DOCX，或确认文件不是扫描图片。`;
+    refreshProfileVisibility();
   }
 });
 
@@ -319,7 +372,1413 @@ $('clear-resume').addEventListener('click', (e) => {
   icon.className = 'upload-icon';
   icon.textContent = '↑';
   saveMemory();
+  refreshProfileVisibility();
+  // 结构化信息是本机资产，不随文件一起删除
+  if (profile) $('profile-hint').textContent = '简历文件已移除，结构化信息仍保留在本机，可继续使用或手动清空。';
 });
+
+// ── 结构化简历（网申预填的数据源）──────────────
+// 流程：简历原文 → AI 抽取六组字段 → 可编辑预览 → 存 chrome.storage.local
+// 隐私：结构化结果只存本机；未连接 AI 时用本地规则粗解析，不外发任何内容
+
+const profileBody = $('profile-body');
+const profileGroupsEl = $('profile-groups');
+
+const PROFILE_LINES = [
+  '正在通读简历原文…',
+  '抽取基础信息与求职意向…',
+  '整理教育与实习经历…',
+  '汇总技能与证书…',
+  '马上就好，正在生成结构化预览…'
+];
+
+// 本地规则的可信字段：格式固定、几乎不会误判，用于给 AI 结果补空缺
+const LOCAL_TRUSTED_KEYS = ['phone', 'email'];
+
+function profileSummaryText() {
+  if (!profile) return '尚未解析';
+  const s = profileStats(profile);
+  const parts = [`已填 ${s.filled} 项`];
+  if (s.educationCount) parts.push(`教育 ${s.educationCount} 段`);
+  if (s.experienceCount) parts.push(`实习/工作 ${s.experienceCount} 段`);
+  if (s.projectCount) parts.push(`项目 ${s.projectCount} 个`);
+  if (s.sensitiveFilled) parts.push(`敏感 ${s.sensitiveFilled} 项`);
+  return parts.join(' · ');
+}
+
+// ── 解析状态的可视化反馈 ───────────────────────
+//
+// 用户的两个疑问必须在视线上得到回答，不能靠"仔细看会发现"：
+//   ① 成功了没有 → 解析按钮旁的常驻状态徽标 + 紧贴头部的结果横幅
+//   ② 数据在哪里 → 常驻的落库说明 + 分组命中数 + 实时保存状态
+//
+// 关键约束：结果横幅必须在 #profile-groups **之前**。字段展开后有好几屏高，
+// 把提示放在列表下方等于没提示。
+
+const PROFILE_STATE = {
+  idle: { text: '待解析' },
+  parsing: { text: '解析中' },
+  ready: { text: '已解析' },
+  empty: { text: '未识别到内容' }
+};
+
+function setProfileState(state) {
+  const el = $('profile-state');
+  if (!el) return;
+  const info = PROFILE_STATE[state] || PROFILE_STATE.idle;
+  el.dataset.state = state;
+  el.textContent = info.text;
+}
+
+// 「数据在哪里」常驻说明。不写死文案，跟随实际状态变化
+function setProfileWhere(state) {
+  const el = $('profile-where');
+  if (!el) return;
+  if (state === 'ready') el.textContent = '已存在本机，网申预填与后续生成都读它';
+  else el.textContent = '解析结果保存在本机，网申预填与后续生成都读它';
+}
+
+// 结果横幅。kind: ok | warn | error | info
+function setProfileNotice(kind, title, detail) {
+  const box = $('profile-status');
+  if (!box) return;
+  box.dataset.kind = kind || 'info';
+  box.hidden = false;
+  $('profile-status-title').textContent = title || '';
+  $('profile-status-detail').textContent = detail || '';
+}
+
+function clearProfileNotice() {
+  const box = $('profile-status');
+  if (!box) return;
+  box.hidden = true;
+  box.dataset.kind = 'info';
+  $('profile-status-title').textContent = '';
+  $('profile-status-detail').textContent = '';
+}
+
+// 保存状态。自动保存本来就在跑，把它变得可见即可消除「我改了到底存没存」的疑虑。
+// 不用定时器清除：常驻一行小字比一闪而过的提示更让人安心。
+function setProfileSaveState(text, kind) {
+  const el = $('profile-savestate');
+  if (!el) return;
+  el.textContent = text || '';
+  el.dataset.kind = kind || '';
+}
+
+// 只更新摘要、完成度与状态，不重绘整个列表（避免打断用户输入）
+function updateProfileMeta() {
+  if (!profile) {
+    $('profile-summary').textContent = '尚未解析';
+    $('profile-meter-bar').style.width = '0%';
+    setProfileState('idle');
+    setProfileWhere('idle');
+    return;
+  }
+  const stats = profileStats(profile);
+  $('profile-summary').textContent = profileSummaryText();
+  $('profile-meter-bar').style.width = stats.percent + '%';
+  setProfileState(stats.filled ? 'ready' : 'empty');
+  setProfileWhere(stats.filled ? 'ready' : 'idle');
+}
+
+// 解析完成后把面板带进视野。只在面板确实被滚出视野时才动，避免无谓的跳动。
+// getBoundingClientRect 在测试桩里不存在，故做存在性判断。
+function scrollProfileIntoView() {
+  const panel = $('profile-panel');
+  if (!panel || typeof panel.getBoundingClientRect !== 'function') return;
+  if (typeof panel.scrollIntoView !== 'function') return;
+  let rect;
+  try {
+    rect = panel.getBoundingClientRect();
+  } catch (e) {
+    return;
+  }
+  const viewport = (typeof window !== 'undefined' && window.innerHeight) || 800;
+  // 面板顶部已经在视口上方，或掉到视口下半部分之外 → 拉回视野
+  const outOfView = rect.top < 0 || rect.top > viewport * 0.6;
+  if (outOfView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderProfileField(field, path, value) {
+  const attrs = `class="pf-input" data-path="${escapeHtml(path)}"`;
+  if (field.type === 'textarea') {
+    return `<textarea ${attrs} rows="2" placeholder="${escapeHtml(field.ph || '')}">${escapeHtml(value)}</textarea>`;
+  }
+  if (!field.options) {
+    return `<input ${attrs} type="text" placeholder="${escapeHtml(field.ph || '')}" value="${escapeHtml(value)}">`;
+  }
+  // 有候选值时用 datalist：给建议但不限制填写
+  const listId = `pf-opts-${path.replace(/\./g, '-')}`;
+  return `<input ${attrs} type="text" list="${listId}" placeholder="${escapeHtml(field.ph || '')}" value="${escapeHtml(value)}">`
+    + `<datalist id="${listId}">${field.options.map(o => `<option value="${escapeHtml(o)}"></option>`).join('')}</datalist>`;
+}
+
+// 分组命中数：让用户一眼看到「解析出了什么」，而不是自己数输入框。
+// 命中为 0 时不上徽标，改用明确的空态文案，避免出现「0」这种像出错的提示。
+function groupCountBadge(filled, total) {
+  if (!filled) return '';
+  return `<span class="pf-group-count">${filled}/${total}</span>`;
+}
+
+function renderProfileObjectGroup(group, includeSensitive) {
+  const visible = group.fields.filter(f => includeSensitive || !f.sensitive);
+  const filledCount = visible.filter(f => profile?.[group.id]?.[f.key]).length;
+  const rows = visible.map(field => {
+    const path = `${group.id}.${field.key}`;
+    const value = getProfilePath(profile, path) || '';
+    return `<div class="pf-row${field.sensitive ? ' is-sensitive' : ''}">
+      <label>${escapeHtml(field.label)}${field.sensitive ? '<i>敏感</i>' : ''}</label>
+      ${renderProfileField(field, path, value)}
+    </div>`;
+  }).join('');
+  const hiddenCount = group.fields.filter(f => f.sensitive && !includeSensitive).length;
+  const notes = [];
+  if (hiddenCount) notes.push(`已隐藏 ${hiddenCount} 项敏感字段（默认不写入网申页面）`);
+  if (!filledCount) notes.push('简历里没有识别到这一组信息，可直接在下面手动补充。');
+  const note = notes.length ? `<p class="pf-note">${notes.join(' ')}</p>` : '';
+  return `<section class="pf-group">
+    <div class="pf-group-head">
+      <h4>${escapeHtml(group.label)}${groupCountBadge(filledCount, visible.length)}</h4>
+    </div>
+    <div class="pf-rows">${rows}</div>${note}
+  </section>`;
+}
+
+function renderProfileListGroup(group) {
+  const items = Array.isArray(profile[group.id]) ? profile[group.id] : [];
+  const filledCount = items.reduce((sum, item) => (
+    sum + group.fields.filter(field => item[field.key]).length
+  ), 0);
+  const cards = items.map((item, index) => {
+    const rows = group.fields.map(field => {
+      const path = `${group.id}.${index}.${field.key}`;
+      return `<div class="pf-row">
+        <label>${escapeHtml(field.label)}</label>
+        ${renderProfileField(field, path, item[field.key] || '')}
+      </div>`;
+    }).join('');
+    return `<article class="pf-item">
+      <div class="pf-item-head">
+        <span class="pf-item-idx">${String(index + 1).padStart(2, '0')}</span>
+        <span class="pf-item-title">${escapeHtml(group.itemLabel)}</span>
+        <button class="pf-remove" type="button" data-group="${group.id}" data-index="${index}" title="删除这一条">×</button>
+      </div>
+      <div class="pf-rows">${rows}</div>
+    </article>`;
+  }).join('');
+  const empty = items.length
+    ? ''
+    : `<p class="pf-note">简历里没有识别到${escapeHtml(group.label)}，可点「+ 添加一条」手动补充。</p>`;
+  return `<section class="pf-group">
+    <div class="pf-group-head">
+      <h4>${escapeHtml(group.label)}${groupCountBadge(filledCount, items.length * group.fields.length)}</h4>
+      <button class="pf-add" type="button" data-group="${group.id}">+ 添加一条</button>
+    </div>
+    ${cards}${empty}
+  </section>`;
+}
+
+function renderProfile() {
+  if (!profile) { profileBody.hidden = true; return; }
+  const includeSensitive = $('profile-sensitive').checked;
+  profileGroupsEl.innerHTML = PROFILE_GROUPS
+    .map(group => group.kind === 'list'
+      ? renderProfileListGroup(group)
+      : renderProfileObjectGroup(group, includeSensitive))
+    .join('');
+  profileBody.hidden = false;
+  updateProfileMeta();
+}
+
+// 编辑即自动保存（600ms 防抖）。自动保存本来就在跑，把它变可见就够了 ——
+// 原先只有手动「保存修改」按钮，用户既不知道改完存没存，也不敢不点。
+const saveProfileNow = async () => {
+  if (!profile) return;
+  await saveProfileToStorage(profile);
+  setProfileSaveState('已保存到本机', 'ok');
+};
+
+const saveProfileDebounced = debounce(saveProfileNow, 600);
+
+profileGroupsEl.addEventListener('input', (e) => {
+  const el = e.target.closest('[data-path]');
+  if (!el || !profile) return;
+  setProfilePath(profile, el.dataset.path, el.value);
+  updateProfileMeta();
+  setProfileSaveState('未保存的修改…', 'pending');
+  saveProfileDebounced();
+});
+
+profileGroupsEl.addEventListener('click', (e) => {
+  if (!profile) return;
+  const removeBtn = e.target.closest('.pf-remove');
+  if (removeBtn) {
+    const group = groupById(removeBtn.dataset.group);
+    if (!group) return;
+    profile[group.id].splice(Number(removeBtn.dataset.index), 1);
+    renderProfile();
+    saveProfileNow();
+    return;
+  }
+  const addBtn = e.target.closest('.pf-add');
+  if (addBtn) {
+    const group = groupById(addBtn.dataset.group);
+    if (!group) return;
+    profile[group.id].push(createEmptyItem(group));
+    renderProfile();
+    saveProfileNow();
+    // 聚焦到新条目的第一个输入框
+    const inputs = profileGroupsEl.querySelectorAll('.pf-input');
+    const last = inputs[inputs.length - 1];
+    if (last) last.focus();
+  }
+});
+
+$('profile-sensitive').addEventListener('change', () => {
+  renderProfile();
+});
+
+// AI 抽取结果的可信度补丁：只补「格式固定」的字段，不做语义猜测
+function mergeProfileGaps(primary, fallback) {
+  for (const group of PROFILE_GROUPS) {
+    if (group.kind === 'list') {
+      if (!primary[group.id]?.length && fallback[group.id]?.length) {
+        primary[group.id] = fallback[group.id];
+      }
+      continue;
+    }
+    for (const field of group.fields) {
+      if (LOCAL_TRUSTED_KEYS.includes(field.key) && !primary[group.id][field.key] && fallback[group.id][field.key]) {
+        primary[group.id][field.key] = fallback[group.id][field.key];
+      }
+    }
+  }
+  return primary;
+}
+
+function refreshProfileVisibility() {
+  const hasText = Boolean(resumeText && resumeText.trim());
+  // 用即时查询而非缓存引用：本函数会被记忆恢复的异步回调触发，早于顶层 const 初始化
+  $('profile-panel').hidden = !hasText && !profile;
+  // hint 讲「这一步是干什么的」，where 讲「数据在哪」——两者分工不重复
+  if (profile) {
+    $('profile-parse').textContent = '重新解析';
+    $('profile-hint').textContent = '逐项核对后即可用于网申预填与后续生成。改完会自动保存。';
+  } else if (hasText) {
+    $('profile-parse').textContent = '解析';
+    $('profile-hint').textContent = '点「解析」把简历拆成姓名、学历、实习等标准字段。未连接 AI 时用本地规则粗解析。';
+  } else {
+    $('profile-hint').textContent = '';
+  }
+  // 简历状态变了，向导的摘要、步骤条与产出可用性都要跟着走
+  renderWizard();
+}
+
+async function parseProfile() {
+  if (profileParsing) return;
+  if (!resumeText || !resumeText.trim()) {
+    setProfileNotice('warn', '还没有简历', '请先用上方区域上传简历文件，再点「解析」。');
+    return;
+  }
+  profileParsing = true;
+  $('profile-parse').textContent = '取消解析';
+  // 解析中：清掉上一次的结果横幅，改为显示进度；状态徽标同步成「解析中」
+  clearProfileNotice();
+  setProfileState('parsing');
+  $('profile-progress').hidden = false;
+  clearInterval(profileTimer);
+  profileTimer = rotateMsg($('profile-progress-message'), PROFILE_LINES);
+
+  const previous = profile;
+  try {
+    if (!promptsReady) { try { await promptsLoaded; } catch (e) { /* 走本地兜底 */ } }
+
+    const settings = await getSettings();
+    let extracted;
+    let source;
+    let aiFailure = '';
+    const useAi = Boolean(settings.apiUrl && settings.apiKey && RESUME_EXTRACT_PROMPT);
+
+    if (!useAi) {
+      extracted = extractProfileLocally(resumeText);
+      source = 'local';
+    } else {
+      $('profile-progress-model').textContent = `正在使用：${settings.model || 'gpt-4.1-mini'}`;
+      try {
+        const raw = await requestCompletion({
+          settings,
+          promptText: `${RESUME_EXTRACT_PROMPT}\n\n【简历原文】\n${resumeText.slice(0, 12000)}`,
+          maxTokens: 6000,
+          temperature: 0,
+          requestKey: 'profile'
+        });
+        extracted = mergeProfileGaps(parseProfileText(raw), extractProfileLocally(resumeText));
+        source = 'ai';
+      } catch (aiError) {
+        // 用户主动取消 → 交给外层统一处理，不要偷偷用本地规则把取消变成"成功"
+        if (aiError.name === 'AbortError') throw aiError;
+        // AI 的任何失败（被截断 / 超时 / 额度 / 网络 / 不按格式返回）都不该让用户卡住：
+        // 本地规则能给出可用结果，如实说明失败原因即可，这比丢一个报错强得多
+        console.warn('AI 抽取失败，回退本地规则', aiError);
+        extracted = extractProfileLocally(resumeText);
+        source = 'local-fallback';
+        aiFailure = aiError.message;
+      }
+    }
+
+    if (!profileHasValue(extracted)) {
+      profile = previous;
+      if (previous) renderProfile();
+      // AI 失败 + 本地规则也抽不到 → 两个原因都要说，否则用户只会看到"没识别到"，
+      // 误以为是简历的问题，实际可能是模型配置的问题
+      const reason = aiFailure ? `AI 未返回结果：${aiFailure}本地规则也没能从这份简历里抽到字段。` : '';
+      setProfileNotice('warn', '没有识别到有效信息',
+        `${reason}若文件是扫描件或纯图片，建议换用 TXT / DOCX 重新上传。`);
+      return;
+    }
+
+    profile = extracted;
+    $('profile-sensitive').checked = false;
+    renderProfile();
+    saveProfileToStorage(profile);
+
+    // 成功横幅带字段计数与经历段数：用户不必自己数输入框就知道"抽到了多少"
+    const stats = profileStats(profile);
+    const shapeParts = [];
+    if (stats.educationCount) shapeParts.push(`教育 ${stats.educationCount} 段`);
+    if (stats.experienceCount) shapeParts.push(`实习/工作 ${stats.experienceCount} 段`);
+    if (stats.projectCount) shapeParts.push(`项目 ${stats.projectCount} 个`);
+    const shape = shapeParts.join(' · ');
+
+    // 三个来源各自补齐「接下来该注意什么」，但字段数/段数这三个分支都要给
+    let tail;
+    if (source === 'ai') {
+      tail = '逐项核对，AI 抽取可能有偏差。';
+    } else if (source === 'local-fallback') {
+      // 把 AI 到底为什么失败如实带出来（截断 / 超时 / 额度 / 网络），
+      // 用户才知道该换模型、检查 Key 还是缩短简历
+      tail = aiFailure ? `AI 未返回结果：${aiFailure}本次已改用本地规则。` : 'AI 未返回结果，本次已改用本地规则。';
+    } else {
+      tail = '未连接 AI，本次用本地规则解析。到「设置」连接 AI 后重新解析会更准更全。';
+    }
+    const fellBack = source === 'local-fallback';
+    setProfileNotice(
+      fellBack ? 'warn' : 'ok',
+      fellBack ? `已用本地规则解析 ${stats.filled} 项` : `解析完成 · 已保存到本机 ${stats.filled} 项`,
+      [shape, tail].filter(Boolean).join('｜')
+    );
+    setProfileSaveState('已保存到本机', 'ok');
+    scrollProfileIntoView();
+  } catch (error) {
+    profile = previous;
+    if (previous) renderProfile();
+    if (error.name === 'AbortError') {
+      setProfileNotice('info', '已取消解析', '');
+    } else {
+      setProfileNotice('error', '解析失败', error.message);
+    }
+  } finally {
+    profileParsing = false;
+    clearInterval(profileTimer);
+    profileTimer = null;
+    $('profile-progress').hidden = true;
+    refreshProfileVisibility();
+    updateProfileMeta();
+  }
+}
+
+async function clearProfile() {
+  profile = null;
+  await clearProfileFromStorage();
+  profileBody.hidden = true;
+  $('profile-sensitive').checked = false;
+  setProfileSaveState('');
+  setProfileNotice('info', '已清空结构化信息', '简历原文仍然保留，随时可以重新解析。');
+  refreshProfileVisibility();
+  updateProfileMeta();
+}
+
+$('profile-parse').addEventListener('click', () => {
+  if (profileParsing) {
+    if (activeRequests['profile']) activeRequests['profile'].abort();
+    return;
+  }
+  parseProfile();
+});
+
+$('profile-clear').addEventListener('click', clearProfile);
+
+$('profile-save').addEventListener('click', () => {
+  if (!profile) return;
+  saveProfileToStorage(profile);
+  setProfileSaveState('已保存到本机 · 刚刚', 'ok');
+  const btn = $('profile-save');
+  btn.textContent = '已保存';
+  setTimeout(() => { btn.textContent = '保存修改'; }, 1500);
+});
+
+// 启动时恢复结构化简历；老用户只有纯文本时提示一键重建（不静默丢弃）
+(async function initProfile() {
+  const stored = await loadProfileFromStorage();
+  if (stored && profileHasValue(stored)) {
+    profile = stored;
+    renderProfile();
+    // 恢复后明确告知：这些字段是从本机存储读回来的，不是刚解析的
+    const stats = profileStats(profile);
+    setProfileNotice('ok', `已从本机读回 ${stats.filled} 项结构化信息`,
+      '上次解析的结果，可直接用于网申预填。需要更新请点「重新解析」。');
+    setProfileSaveState('已保存到本机', 'ok');
+  }
+  refreshProfileVisibility();
+  updateProfileMeta();
+})();
+
+
+
+// ── 向导：1 简历 → 2 岗位 → 3 产出 ─────────────
+// 只做「顺序引导 + 状态可见 + 摘要回看」，不强制走完：简历可选，随时能跳步。
+
+function hasResume() {
+  // 只传了简历原文没解析过也能预填：结构化简历在这里即时生成，不额外要求用户点「解析」
+  return Boolean((resumeText && resumeText.trim()) || profile);
+}
+
+function structuredProfile() {
+  if (profile && profileHasValue(profile)) return profile;
+  if (!resumeText || !resumeText.trim()) return null;
+  try {
+    const local = extractProfileLocally(resumeText);
+    return profileHasValue(local) ? local : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function jobReady() {
+  return jobInput.value.trim().length >= 20;
+}
+
+function stepDone(name) {
+  if (name === 'resume') return hasResume();
+  if (name === 'job') return jobReady();
+  return Boolean(lastSections.interview || lastSections.greeting || lastSections.optimize);
+}
+
+function stepSummary(name) {
+  if (name === 'resume') {
+    if (!hasResume()) {
+      return wizard.skippedResume
+        ? '已跳过（简历可选，仅影响打招呼语与简历优化）'
+        : '尚未上传简历（可选）';
+    }
+    const parts = [];
+    const fileName = $('file-label').textContent;
+    if (fileName && fileName !== '上传简历') parts.push(fileName);
+    if (profile) parts.push(profileSummaryText());
+    else parts.push(`已读取 ${resumeText.length} 字，网申预填时用本地规则粗解析`);
+    return parts.join(' · ');
+  }
+  if (name === 'job') {
+    const job = jobInput.value.trim();
+    if (!job) return '尚未粘贴岗位描述';
+    const title = job.split('\n').map(l => l.trim()).filter(Boolean)[0] || '';
+    return `${job.length} 字 · ${title.slice(0, 24)}${title.length > 24 ? '…' : ''}`;
+  }
+  return '';
+}
+
+// 产出卡可用性：把「缺什么」写在卡片上，用户不必点错才知道
+function updateOutputCards() {
+  const ready = { job: jobReady(), resume: hasResume() };
+  for (const card of OUTPUT_CARDS) {
+    const btn = $(card.id);
+    if (!btn) continue;
+    const missing = [];
+    if (card.need.includes('job') && !ready.job) missing.push('岗位描述');
+    if (card.need.includes('resume') && !ready.resume) missing.push('简历');
+    const stateEl = $(card.stateId);
+    if (stateEl) {
+      stateEl.textContent = missing.length ? `需先补${missing.join('、')}` : '可以生成';
+      stateEl.classList.toggle('is-ready', missing.length === 0);
+    }
+  }
+}
+
+function renderWizard() {
+  for (const name of WIZARD_ORDER) {
+    const panel = $(`step-${name}`);
+    const active = name === wizard.step;
+    // 当前步展开；进过的步骤折叠成摘要行；没进过的步骤不显示
+    const collapsed = !active && Boolean(wizard.visited[name]);
+    if (panel) {
+      panel.hidden = !active && !collapsed;
+      panel.classList.toggle('is-collapsed', collapsed);
+    }
+    const collapsedBox = $(`step-${name}-collapsed`);
+    if (collapsedBox) collapsedBox.hidden = !collapsed;
+    const summary = $(`step-${name}-summary`);
+    if (summary) summary.textContent = stepSummary(name);
+    const chip = document.querySelector(`.step-chip[data-step="${name}"]`);
+    if (chip) {
+      chip.classList.toggle('is-active', active);
+      chip.classList.toggle('is-done', stepDone(name));
+      if (active) chip.setAttribute('aria-current', 'step');
+      else if (typeof chip.removeAttribute === 'function') chip.removeAttribute('aria-current');
+    }
+  }
+  const resumeTag = $('step-resume-tag');
+  if (resumeTag) {
+    resumeTag.textContent = hasResume() ? '已填写' : '可选';
+    resumeTag.classList.toggle('is-ok', hasResume());
+  }
+  const jobTag = $('step-job-tag');
+  if (jobTag) {
+    jobTag.textContent = jobReady() ? '已填写' : '必填';
+    jobTag.classList.toggle('is-ok', jobReady());
+  }
+  updateOutputCards();
+  // 预填卡的可用性依赖「结构化简历是否存在」，而它有三种来源（已解析/本地粗解析/都没有），
+  // 判断逻辑集中在 refreshAutofillAvailability 一处，这里只负责触发刷新
+  refreshAutofillAvailability();
+}
+
+function setStep(name, focusEl) {
+  if (!WIZARD_ORDER.includes(name)) return;
+  if (wizard.step && wizard.step !== name) wizard.visited[wizard.step] = true;
+  wizard.step = name;
+  wizard.visited[name] = true;
+  renderWizard();
+  if (focusEl && typeof focusEl.focus === 'function') focusEl.focus();
+}
+
+// 校验失败时把用户送到「缺的那一步」，而不是只丢一句错误在原地
+function gotoMissingStep(needsResume, message) {
+  if (needsResume) {
+    setStep('resume');
+    $('resume-step-status').textContent = message;
+  } else {
+    setStep('job', jobInput);
+    $('job-step-status').textContent = message;
+  }
+}
+
+// 生成完成后滚到结果区（结果在向导之外，避免被步骤折叠藏起来）
+function scrollToResults(mode) {
+  const el = mode === 'interview' ? interviewResults : mode === 'greeting' ? greetingResults : optimizeResults;
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── 从当前页面抓取 JD ─────────────────────────
+// 复用已注入的 content script 通道（manifest 里的 jd-extract.js / jd-grab.js），
+// 不需要新增权限，也不做运行时脚本注入。
+
+const GRAB_LABEL = '从当前页面抓取';
+const GRAB_LABEL_BLOCKED = '当前页面无法抓取';
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch (e) {
+    return '当前页面';
+  }
+}
+
+function getActiveTab() {
+  return new Promise((resolve) => {
+    if (!chrome.tabs || typeof chrome.tabs.query !== 'function') {
+      resolve(null);
+      return;
+    }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0]) {
+        resolve(tabs[0]);
+        return;
+      }
+      // 侧边栏场景下 currentWindow 可能取不到，用最近聚焦窗口兜底
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (fallback) => {
+        resolve((fallback && fallback[0]) || null);
+      });
+    });
+  });
+}
+
+function sendTabMessage(tabId, message) {
+  return new Promise((resolve) => {
+    if (!chrome.tabs || typeof chrome.tabs.sendMessage !== 'function') {
+      resolve(null);
+      return;
+    }
+    try {
+      // 指定 frameId 0：只有主 frame 注入了 jd-grab.js
+      chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (response) => {
+        // 页面在扩展安装/更新之前就已打开时，接收端不存在。
+        // 必须读取 lastError 才会被消费掉，否则控制台会出现未捕获错误。
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(response || null);
+      });
+    } catch (error) {
+      resolve(null);
+    }
+  });
+}
+
+// 撤销只在「内容仍是抓取结果」时有意义：用户一旦改动，撤销就会覆盖他刚编辑的内容
+function syncGrabUndo() {
+  const btn = $('grab-undo');
+  if (!btn) return;
+  btn.hidden = !(grabUndo && jobInput.value === grabUndo.grabbed);
+}
+
+function grabFailureMessage(res) {
+  if (res.reason === 'too-short') {
+    return '抓到的内容太短，可能不是职位详情页。若详情被折叠，先点开「职位详情」再试，或手动复制粘贴。';
+  }
+  if (res.reason === 'error') {
+    return `抓取时出错：${res.detail || '未知原因'}。可手动复制粘贴。`;
+  }
+  return '这个页面里没找到岗位描述。若详情被折叠，先点开「职位详情」再试；若内容以图片渲染，请手动复制粘贴。';
+}
+
+function applyGrabbedJd(res, tab) {
+  const before = jobInput.value;
+  const text = res.text;
+
+  // 先记撤销信息：下面的 updateJobControls 会调用 syncGrabUndo 读取它
+  grabUndo = (before.trim() && before.trim() !== text.trim())
+    ? { previous: before, grabbed: text }
+    : null;
+
+  jobInput.value = text;
+  if (typeof jobInput.scrollTop === 'number') jobInput.scrollTop = 0;
+  updateJobControls();
+  saveMemory();
+
+  const site = res.site || hostOf(tab && tab.url);
+  $('job-step-status').textContent = `已从 ${site} 抓取 ${text.length} 个字符，请核对首尾是否完整。`;
+}
+
+async function refreshGrabAvailability() {
+  const btn = $('fetch-jd');
+  if (!btn) return;
+
+  if (grabBusy) {
+    btn.disabled = true;
+    btn.textContent = '正在抓取…';
+    return;
+  }
+
+  const tab = await getActiveTab();
+  const url = (tab && tab.url) || '';
+  const ok = /^https?:/i.test(url);
+
+  btn.disabled = !ok;
+  btn.textContent = ok ? GRAB_LABEL : GRAB_LABEL_BLOCKED;
+  btn.title = ok
+    ? `从 ${hostOf(url)} 当前页面抓取岗位描述`
+    : '只支持普通网页（http/https）。浏览器内置页面、扩展页面与本地文件无法抓取。';
+}
+
+async function grabJdFromPage() {
+  if (grabBusy) return;
+
+  const status = $('job-step-status');
+  const tab = await getActiveTab();
+  const url = (tab && tab.url) || '';
+
+  if (!tab || !/^https?:/i.test(url)) {
+    status.textContent = '当前页面无法抓取：只支持普通网页。请切到招聘网站的职位详情页，或手动粘贴。';
+    return;
+  }
+
+  grabBusy = true;
+  await refreshGrabAvailability();
+  status.textContent = '正在读取当前页面…';
+
+  try {
+    const res = await sendTabMessage(tab.id, { type: 'jd:grab' });
+
+    if (!res) {
+      status.textContent = '无法与当前页面通信。刚安装或更新扩展后需要刷新该网页一次，再点抓取。';
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = grabFailureMessage(res);
+      return;
+    }
+    applyGrabbedJd(res, tab);
+  } catch (error) {
+    status.textContent = `抓取失败：${(error && error.message) || error}`;
+  } finally {
+    grabBusy = false;
+    await refreshGrabAvailability();
+  }
+}
+
+$('fetch-jd').addEventListener('click', grabJdFromPage);
+
+$('grab-undo').addEventListener('click', () => {
+  if (!grabUndo) return;
+  const restore = grabUndo.previous;
+  grabUndo = null;
+  jobInput.value = restore;
+  updateJobControls();
+  saveMemory();
+  $('job-step-status').textContent = '已恢复抓取前的内容。';
+});
+
+// 侧边栏常驻：切换标签页后按钮可用性必须跟着变，否则会指向错误的页面
+if (chrome.tabs && chrome.tabs.onActivated && typeof chrome.tabs.onActivated.addListener === 'function') {
+  chrome.tabs.onActivated.addListener(() => {
+    refreshGrabAvailability();
+    // 换了页面之前扫的表单就失效了：清掉计划并收起面板，避免用户把旧清单当成本页的
+    if (autofillScan) {
+      autofillScan = null;
+      autofillPlan = null;
+      const panel = $('autofill-panel');
+      if (panel && !panel.hidden) {
+        panel.hidden = true;
+        autofillStatus('');
+      }
+    }
+    refreshAutofillAvailability();
+  });
+}
+
+refreshGrabAvailability().catch(() => {});
+
+// ── 网申预填 ──────────────────────────────────
+//
+// 设计要点（按需求文档定稿）：
+//   · 只填不提交。代码里不存在任何点击提交按钮的路径，这是硬边界。
+//   · 通用语义引擎，不做逐站适配器：本地 41 条规则打分 + 可选 AI 语义映射。
+//   · 宁缺勿错。认不出的字段一律进「需你手动处理」清单，并如实说明原因。
+//   · 敏感字段（身份证/银行卡/住址/紧急联系人）默认关闭。
+//   · 自定义下拉框与文件上传无法程序化写入，跳过并提示，不做无效尝试。
+//
+// AI 的角色被刻意限制为「从固定语义枚举里选一个」，填什么值完全由本地
+// 取值层决定。AI 没配、超时或返回不合法 → 自动退回纯本地规则，不卡住用户。
+
+const AUTOFILL_STATUS = 'autofill-status';
+const AUTOFILL_PANEL = 'autofill-panel';
+
+// 扫描阶段的进度文案（本地规则几乎瞬时完成，所以只有 AI 那一轮需要转圈）
+const AUTOFILL_AI_LINES = [
+  '正在读取页面表单结构…',
+  '让 AI 判断每个字段该填什么…',
+  '对照你的简历逐项取值…',
+  '整理需你手动确认的部分…'
+];
+
+const AUTOFILL_AI_MAX_FIELDS = 120;
+
+function autofillStatus(text) {
+  const el = $(AUTOFILL_STATUS);
+  if (el) el.textContent = text || '';
+}
+
+// ── AI 语义映射 ────────────────────────────────
+// 只把「本地认不出」的字段交给 AI。本地已经确定的字段不再消耗 token，
+// 也避免 AI 把已经判对的结果改错。
+
+// 字段特征以单行摘要呈现，噪音（长文本、多余属性）在这里就滤掉，
+// 既省 token 也让模型更容易抓住标签名。
+// toSingleLine / FILL_RULES 复用 form-fill.js，不另起一套。
+function buildFormMapPrompt(fields) {
+  const oneLine = (value, limit) => toSingleLine(value).replace(/\s+/g, ' ').slice(0, limit);
+  const lines = [];
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i];
+    const parts = [`[${i}] 类型=${f.type}`];
+    if (f.label) parts.push(`标签="${oneLine(f.label, 40)}"`);
+    if (f.optionText) parts.push(`本项文字="${oneLine(f.optionText, 20)}"`);
+    if (!f.label && f.placeholder) parts.push(`placeholder="${oneLine(f.placeholder, 40)}"`);
+    if (f.name) parts.push(`name=${oneLine(f.name, 40)}`);
+    if (f.id && f.id !== f.name) parts.push(`id=${oneLine(f.id, 40)}`);
+    if (f.autocomplete && f.autocomplete !== 'off') parts.push(`autocomplete=${oneLine(f.autocomplete, 20)}`);
+    if (f.dataHints) parts.push(`data提示="${oneLine(f.dataHints, 40)}"`);
+    if (Array.isArray(f.sectionTexts) && f.sectionTexts.length) {
+      parts.push(`所在区块="${f.sectionTexts.map(t => oneLine(t, 20)).join(' / ')}"`);
+    }
+    if (f.type === 'select' && Array.isArray(f.options) && f.options.length) {
+      const texts = f.options
+        .map(o => oneLine(o.text, 16))
+        .filter(Boolean)
+        .slice(0, 12);
+      if (texts.length) parts.push(`选项=[${texts.join('|')}]`);
+    }
+    lines.push(parts.join(' '));
+  }
+  return `【页面表单控件】\n${lines.join('\n')}`;
+}
+
+// 解析 AI 返回的「序号<TAB>语义」。容错：制表符/空格/冒号/逗号分隔都能认；
+// 语义不在枚举里的一律丢弃（返回 undefined → 该字段退回本地判定）。
+function parseFormMapResponse(raw, semanticIds) {
+  const out = {};
+  const allowed = {};
+  for (const id of semanticIds) allowed[id] = true;
+  const text = String(raw || '').replace(/\r/g, '');
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim().replace(/^[-*•]\s*/, '').replace(/^```.*$/, '');
+    if (!trimmed) continue;
+    const match = trimmed.match(/^\[?(\d{1,4})\]?\s*[\s:：,，\t|]+\s*([A-Za-z][A-Za-z0-9_.]*|\?|？)\s*$/);
+    if (!match) continue;
+    const index = Number(match[1]);
+    const value = match[2];
+    if (!Number.isInteger(index) || index < 0) continue;
+    if (value === '?' || value === '？') { out[index] = null; continue; }
+    // 模型可能写成 basic.phone / Basic.Phone / basic_phone，统一归一
+    const normalized = value.trim().replace(/_/g, '.').toLowerCase();
+    if (allowed[normalized]) out[index] = normalized;
+    else if (allowed[value]) out[index] = value;
+  }
+  return out;
+}
+
+async function requestFormMap(settings, fields) {
+  const sub = fields.slice(0, AUTOFILL_AI_MAX_FIELDS);
+  const promptText = `${FORM_MAP_PROMPT}\n\n${buildFormMapPrompt(sub)}`;
+  try {
+    // 超时与取消由 requestCompletion 统一兜底（API_TIMEOUT_MS），此处不重复造一套
+    const raw = await requestCompletion({
+      settings,
+      promptText,
+      maxTokens: 2000,
+      temperature: 0,
+      requestKey: 'formmap'
+    });
+    return { hint: parseFormMapResponse(raw, FILL_RULES.map(r => r.id)), count: sub.length };
+  } catch (error) {
+    return { hint: {}, count: sub.length, error };
+  }
+}
+
+// ── 计划构建 ──────────────────────────────────
+
+function autofillOptions() {
+  const overwriteEl = $('autofill-overwrite');
+  const sensitiveEl = $('autofill-sensitive');
+  return {
+    overwrite: Boolean(overwriteEl && overwriteEl.checked),
+    includeSensitive: Boolean(sensitiveEl && sensitiveEl.checked),
+    sensitiveKeys: PROFILE_SENSITIVE_KEYS
+  };
+}
+
+// 扫描进度：只在扫描/识别期间占用摘要行，停止时立刻交还给渲染函数。
+// 用 generation 计数防止已经排队的 tick 在停止后仍然改写摘要（否则会把结果文案冲掉）。
+let autofillProgressGen = 0;
+
+function autofillProgress(on, text) {
+  const el = $('autofill-summary');
+  clearInterval(autofillProgressTimer);
+  autofillProgressTimer = null;
+  autofillProgressGen += 1;
+
+  if (!on) return;
+  const gen = autofillProgressGen;
+  if (el && text) el.textContent = text;
+  if (!el || typeof setInterval !== 'function') return;
+
+  let i = 0;
+  el.textContent = text || AUTOFILL_AI_LINES[0];
+  autofillProgressTimer = setInterval(() => {
+    // 停止后再响的 tick 一律丢弃
+    if (gen !== autofillProgressGen) return;
+    i = (i + 1) % AUTOFILL_AI_LINES.length;
+    const target = $('autofill-summary');
+    if (target) target.textContent = AUTOFILL_AI_LINES[i];
+  }, 1600);
+}
+
+// 扫描与计划分离：开关切换、重新扫描都走这两个函数，职责单一
+async function scanAutofillPage() {
+  const tab = await getActiveTab();
+  const url = (tab && tab.url) || '';
+  if (!tab || !/^https?:/i.test(url)) {
+    return { ok: false, reason: 'no-tab', detail: '只支持普通网页（http/https）。浏览器内置页面与扩展页面无法读取表单。' };
+  }
+  const res = await sendTabMessage(tab.id, { type: 'form:scan' });
+  if (!res) {
+    return { ok: false, reason: 'no-channel', detail: '无法与当前页面通信。刚安装或更新扩展后需要刷新该网页一次，再点扫描。' };
+  }
+  if (!res.ok) {
+    return { ok: false, reason: res.reason || 'error', detail: res.detail || '扫描失败。' };
+  }
+  return { ok: true, tab, url, site: res.site || hostOf(url), fields: res.fields || [], title: res.title || '' };
+}
+
+// 本地规则只处理它认得出的字段；认不出的成批交给 AI（若已连接），
+// AI 的判断作为「语义提示」参与打分，而不是直接覆盖取值。
+async function buildAutofillPlan(profileData) {
+  const fields = (autofillScan && autofillScan.fields) || [];
+  const options = autofillOptions();
+
+  // 1) 先跑一遍纯本地，拿到「已确定」与「待定」两组
+  const local = createFillPlan(fields, profileData, options);
+  const resolvedRefs = {};
+  for (const item of local.items) resolvedRefs[item.ref] = true;
+
+  const uncertain = fields.filter(f => !resolvedRefs[f.ref]);
+  if (!uncertain.length) {
+    autofillAiFailed = false;
+    return { plan: local, aiUsed: false, aiPending: 0 };
+  }
+
+  const settings = await getSettings();
+  if (!settings.apiUrl || !settings.apiKey || !FORM_MAP_PROMPT) {
+    autofillAiFailed = false;
+    return { plan: local, aiUsed: false, aiSkipped: true, aiPending: uncertain.length };
+  }
+
+  const mapped = await requestFormMap(settings, uncertain);
+  autofillAiFailed = Boolean(mapped.error);
+
+  const hint = {};
+  for (const index of Object.keys(mapped.hint)) {
+    const semantic = mapped.hint[index];
+    if (!semantic) continue;
+    const field = uncertain[Number(index)];
+    if (field && field.ref != null) hint[field.ref] = semantic;
+  }
+
+  if (!Object.keys(hint).length) {
+    return { plan: local, aiUsed: false, aiFailed: Boolean(mapped.error), aiPending: uncertain.length };
+  }
+
+  const plan = createFillPlan(fields, profileData, Object.assign({}, options, { hint }));
+  return { plan, aiUsed: true, aiFailed: Boolean(mapped.error), aiPending: uncertain.length };
+}
+
+// ── 渲染 ──────────────────────────────────────
+
+function autofillSummaryText(info) {
+  const { plan, scan } = info;
+  const parts = [`扫描到 ${plan.stats.total} 个可编辑控件`];
+  if (plan.stats.fillable) parts.push(`可自动填 ${plan.stats.fillable} 项`);
+  if (plan.stats.manual) parts.push(`需你处理 ${plan.stats.manual} 项`);
+  if (!plan.stats.fillable) parts.push('这次没有可自动填写的字段');
+  return parts.join(' · ');
+}
+
+function renderAutofillList(targetId, entries) {
+  const el = $(targetId);
+  if (!el) return;
+  el.innerHTML = entries.map(entry => {
+    const label = entry.label || '（无标签字段）';
+    const right = entry.right ? `<span class="af-item-right">${escapeHtml(entry.right)}</span>` : '';
+    const sub = entry.sub ? `<span class="af-item-sub">${escapeHtml(entry.sub)}</span>` : '';
+    return `<div class="af-item">
+      <span class="af-item-label">${escapeHtml(label)}</span>
+      <span class="af-item-meta"><span class="af-item-value">${escapeHtml(entry.value || '')}</span>${right}</span>
+      ${sub}
+    </div>`;
+  }).join('');
+}
+
+function renderAutofillPanel(info) {
+  const panel = $(AUTOFILL_PANEL);
+  if (!panel || !info) return;
+
+  const plan = info.plan || { items: [], manual: [], stats: { total: 0, fillable: 0, manual: 0 } };
+  const site = (autofillScan && autofillScan.site) || '当前页面';
+
+  panel.hidden = false;
+  $('autofill-site').textContent = site;
+  $('autofill-summary').textContent = autofillSummaryText(info);
+
+  // 将填写
+  const fillBlock = $('autofill-fill-block');
+  const items = plan.items || [];
+  fillBlock.hidden = !items.length;
+  $('autofill-fill-count').textContent = items.length ? `${items.length} 项` : '';
+  renderAutofillList('autofill-fill-list', items.map(item => ({
+    label: item.formLabel || item.semanticLabel,
+    value: item.displayValue || '',
+    right: item.semanticLabel,
+    sub: item.note || ''
+  })));
+
+  // 需手动
+  const manualBlock = $('autofill-manual-block');
+  const manual = plan.manual || [];
+  manualBlock.hidden = !manual.length;
+  $('autofill-manual-count').textContent = manual.length ? `${manual.length} 项` : '';
+  renderAutofillList('autofill-manual-list', manual.map(entry => ({
+    label: entry.formLabel || '（无标签字段）',
+    value: entry.title,
+    sub: entry.detail
+  })));
+
+  const confirmBtn = $('autofill-confirm');
+  if (confirmBtn) {
+    confirmBtn.disabled = !items.length;
+    confirmBtn.textContent = items.length ? `确认填写 ${items.length} 项` : '没有可填写的字段';
+  }
+
+  // 如实告知 AI 的参与情况，不让用户以为「AI 什么都懂」
+  const notes = [];
+  if (info.aiFailed) notes.push('AI 判断这一步没成功，本次仅用本地规则识别，可点「重新扫描」再试');
+  else if (info.aiUsed) notes.push('已结合 AI 判断字段含义');
+  else if (info.aiSkipped && info.aiPending) notes.push(`有 ${info.aiPending} 个字段本地认不出，到「设置」连接 AI 后可提高识别率`);
+  else notes.push('仅用本地规则识别');
+  notes.push('填写位置会用红框标出，请核对后自行提交');
+  autofillStatus(notes.join('；') + '。');
+}
+
+function autofillFailureMessage(res) {
+  const detail = res.detail || '';
+  if (res.reason === 'no-tab') return detail || '只支持普通网页（http/https）。';
+  if (res.reason === 'no-channel') return detail || '无法与当前页面通信，请刷新网页后重试。';
+  if (res.reason === 'loading') return detail || '页面还在加载，请等页面显示完整后再扫描。';
+  return `扫描失败：${detail || '未知原因'}`;
+}
+
+// ── 主流程 ────────────────────────────────────
+
+async function refreshAutofillAvailability() {
+  const btn = $('autofill-button');
+  if (!btn) return;
+
+  if (autofillBusy) {
+    btn.disabled = true;
+    $('state-autofill').textContent = '正在扫描…';
+    return;
+  }
+  btn.disabled = false;
+
+  const stateEl = $('state-autofill');
+  const structured = structuredProfile();
+  if (!structured) {
+    if (stateEl) {
+      stateEl.textContent = '需先上传简历';
+      stateEl.classList.remove('is-ready');
+    }
+    btn.disabled = true;
+    return;
+  }
+  if (stateEl) {
+    stateEl.textContent = profile ? '可以填写' : '可以填写（本地规则）';
+    stateEl.classList.add('is-ready');
+  }
+}
+
+async function openAutofill() {
+  if (autofillBusy) return;
+
+  const panel = $(AUTOFILL_PANEL);
+  if (panel) panel.hidden = false;
+
+  const structured = structuredProfile();
+  if (!structured) {
+    gotoMissingStep(true, '网申预填需要先上传简历。');
+    autofillStatus('请先在第 1 步上传简历，再回来填网申表单。');
+    return;
+  }
+
+  autofillBusy = true;
+  autofillAiFailed = false;
+  autofillScan = null;
+  autofillPlan = null;
+  $('autofill-fill-block').hidden = true;
+  $('autofill-manual-block').hidden = true;
+  $('autofill-confirm').disabled = true;
+  $('autofill-site').textContent = '';
+  autofillProgress(true);
+  await refreshAutofillAvailability();
+
+  try {
+    const scan = await scanAutofillPage();
+    if (!scan.ok) {
+      autofillProgress(false);
+      autofillStatus(autofillFailureMessage(scan));
+      $('autofill-summary').textContent = '';
+      return;
+    }
+    autofillScan = scan;
+    $('autofill-site').textContent = scan.site;
+
+    if (!scan.fields.length) {
+      autofillProgress(false);
+      $('autofill-summary').textContent = '这个页面里没找到可编辑的表单控件';
+      autofillStatus('若表单在页面内嵌的框架（iframe）里，或还没点开「填写申请表」，请展开后重新扫描。');
+      return;
+    }
+
+    const built = await buildAutofillPlan(structured);
+    autofillProgress(false);
+    autofillPlan = built.plan;
+    renderAutofillPanel({ plan: built.plan, scan, aiUsed: built.aiUsed, aiFailed: built.aiFailed, aiSkipped: built.aiSkipped, aiPending: built.aiPending });
+  } catch (error) {
+    autofillProgress(false);
+    autofillStatus(`扫描出错：${(error && error.message) || error}`);
+  } finally {
+    autofillBusy = false;
+    await refreshAutofillAvailability();
+  }
+}
+
+// 开关与「重新扫描」都会重算计划。已在页面上填过的值不会因此丢失，
+// 因为重算只是重新识别字段，不触碰页面。
+async function rebuildAutofillPlan() {
+  if (autofillBusy || !autofillScan) return;
+  const structured = structuredProfile();
+  if (!structured) return;
+
+  autofillBusy = true;
+  autofillProgress(true, '正在重新识别字段…');
+  await refreshAutofillAvailability();
+  try {
+    const built = await buildAutofillPlan(structured);
+    autofillProgress(false);
+    autofillPlan = built.plan;
+    renderAutofillPanel({ plan: built.plan, scan: autofillScan, aiUsed: built.aiUsed, aiFailed: built.aiFailed, aiSkipped: built.aiSkipped, aiPending: built.aiPending });
+  } catch (error) {
+    autofillProgress(false);
+    autofillStatus(`重新识别失败：${(error && error.message) || error}`);
+  } finally {
+    autofillBusy = false;
+    await refreshAutofillAvailability();
+  }
+}
+
+async function confirmAutofill() {
+  if (autofillBusy || !autofillScan) return;
+  const plan = autofillPlan;
+  if (!plan || !plan.items.length) {
+    autofillStatus('没有可填写的字段。');
+    return;
+  }
+
+  const tab = await getActiveTab();
+  if (!tab || !/^https?:/i.test((tab && tab.url) || '')) {
+    autofillStatus('当前页面不可写入，请切回网申页面再试。');
+    return;
+  }
+
+  autofillBusy = true;
+  const btn = $('autofill-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = '正在写入…'; }
+  await refreshAutofillAvailability();
+
+  try {
+    // 只发「值」，不发任何提交意图
+    const payload = plan.items.map(item => ({ ref: item.ref, value: item.value }));
+    const res = await sendTabMessage(tab.id, { type: 'form:fill', items: payload });
+
+    if (!res) {
+      autofillStatus('无法与当前页面通信。刚安装或更新扩展后需要刷新该网页一次，再重新扫描。');
+      return;
+    }
+    if (!res.ok) {
+      autofillStatus(res.detail ? `写入失败：${res.detail}` : '写入失败，请重新扫描后再试。');
+      return;
+    }
+
+    const summary = summarizeFillResult(res.results || []);
+    // 可搜索下拉框只是把关键词填了进去，还没真正选中 —— 必须说清楚，
+    // 否则用户以为填好了直接提交，那个值会丢
+    const assistedCount = plan.items.filter(item => item.assisted).length;
+    const assistedNote = assistedCount
+      ? `其中 ${assistedCount} 项是可搜索的下拉框，已填入关键词，请从下拉候选里点选确认。`
+      : '';
+    if (!summary.failed) {
+      autofillStatus(`已填写 ${summary.ok} 项，页面上用红框标出。${assistedNote}请逐项核对后自行提交。`);
+    } else if (summary.stale) {
+      autofillStatus(`已填写 ${summary.ok} 项，另有 ${summary.stale} 项因页面结构变化未填写。请重新扫描后再试。`);
+    } else {
+      autofillStatus(`已填写 ${summary.ok} 项，${summary.other} 项写入未生效，请手动补填。${assistedNote}`);
+    }
+  } catch (error) {
+    autofillStatus(`写入出错：${(error && error.message) || error}`);
+  } finally {
+    autofillBusy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = plan.items.length ? `确认填写 ${plan.items.length} 项` : '没有可填写的字段';
+    }
+    await refreshAutofillAvailability();
+  }
+}
+
+async function clearAutofillMarks() {
+  const tab = await getActiveTab();
+  if (!tab || !/^https?:/i.test((tab && tab.url) || '')) {
+    autofillStatus('当前页面没有可清除的标记。');
+    return;
+  }
+  const res = await sendTabMessage(tab.id, { type: 'form:clear' });
+  if (!res || !res.ok) {
+    autofillStatus('无法与当前页面通信，未能清除标记。');
+    return;
+  }
+  autofillStatus(res.cleared
+    ? `已清除 ${res.cleared} 个字段的红框标记（字段内容不会被清空）。`
+    : '页面上没有标记需要清除。');
+}
+
+// 面板占位（HTML 里已预留 #autofill-panel，此处仅做防御性检查）
+if (!$('autofill-button')) {
+  console.warn('产出卡 #autofill-button 缺失，网申预填将不可用');
+}
+
+// ── 诊断详情导出 ──────────────────────────────
+//
+// 用于回答「这个字段为什么没填上」。用户在真实页面上点一下，
+// 就能拿到每个控件的原始特征（标签 / name / 类型）+ 识别结果 + 跳过原因。
+//
+// 为什么需要它：光看「需你手动处理」清单不够 —— 控件可能压根没被扫描到
+// （在 iframe 里、被 isVisible 过滤、选择器没命中），那种情况两张清单里都不会出现，
+// 只有把「扫描到的全部控件」列出来才能区分「没扫到」和「识别失败」。
+
+function buildAutofillDiagnosticReport() {
+  const scan = autofillScan;
+  if (!scan) return '';
+  const plan = autofillPlan || { items: [], manual: [] };
+  const fields = scan.fields || [];
+
+  const itemByRef = {};
+  for (const item of plan.items) itemByRef[item.ref] = item;
+  const manualByRef = {};
+  for (const entry of plan.manual) manualByRef[entry.ref] = entry;
+
+  const lines = [];
+  lines.push('【网申预填诊断报告】');
+  lines.push('页面：' + (scan.url || ''));
+  lines.push('站点：' + (scan.site || ''));
+  lines.push('时间：' + new Date().toLocaleString('zh-CN'));
+  lines.push('扫描到 ' + fields.length + ' 个可编辑控件｜将填写 ' + plan.items.length + '｜需手动 ' + plan.manual.length);
+  lines.push('');
+  lines.push('── 控件清单（按页面顺序，含未识别与已跳过的）──');
+  lines.push('序号 | 类型 | 标签 / name | 识别结果 | 处置');
+
+  fields.forEach((field, index) => {
+    // 这里刻意只显示 label，不拿 placeholder 兜底。
+    // 两者混在一起会掩盖「标签根本没读出来」这个关键事实：报告里几十行
+    // 显示「请选择」时，看不出到底是标签被解成了占位符，还是压根没有标签。
+    // 排查这两者的改法完全不同，所以必须分开显示。
+    const label = field.label || '(标签为空)';
+    const phPart = field.placeholder ? ' [ph=' + field.placeholder + ']' : '';
+    const namePart = field.name ? ' [name=' + field.name + ']' : '';
+    let semantic = '—';
+    let action = '未识别';
+    if (itemByRef[field.ref]) {
+      semantic = itemByRef[field.ref].semantic + '(' + itemByRef[field.ref].score + ')';
+      // 可搜索的下拉框只是帮用户填了关键词，还没真正选中 —— 报告里要能看出来
+      action = itemByRef[field.ref].assisted ? '填入关键词(待点选)' : '将填写';
+    } else if (manualByRef[field.ref]) {
+      semantic = manualByRef[field.ref].reason;
+      action = '跳过：' + manualByRef[field.ref].title;
+    }
+    lines.push([
+      String(index + 1).padStart(3),
+      String(field.type || '').padEnd(14),
+      (label + phPart + namePart).slice(0, 48).padEnd(48),
+      semantic.slice(0, 26).padEnd(26),
+      action
+    ].join(' | '));
+  });
+
+  if (plan.manual.length) {
+    lines.push('');
+    lines.push('── 需你手动处理的原因 ──');
+    // 同一原因出现几十次时合并计数。不合并的话，40 行几乎一模一样的
+    // 「未能识别」会把真正要看的那几行淹掉。
+    const grouped = new Map();
+    for (const entry of plan.manual) {
+      const key = entry.reason + '\u0000' + (entry.formLabel || '') + '\u0000' + entry.title;
+      const hit = grouped.get(key);
+      if (hit) hit.count += 1;
+      else grouped.set(key, { entry, count: 1 });
+    }
+    for (const record of grouped.values()) {
+      const entry = record.entry;
+      lines.push('- [' + entry.reason + '] ' + (entry.formLabel || '(无标签)') +
+        (record.count > 1 ? ' ×' + record.count : '') + '：' + entry.title + ' — ' + entry.detail);
+    }
+  }
+
+  // 未填写控件的原始特征。
+  //
+  // 这一段的用处是区分「标签没解析出来」与「标签解析出来了但没有规则匹配」——
+  // 只看识别结果永远是「未能识别」，两种情况看着一模一样，改法却完全不同。
+  // 上一轮排查「学校抓不到」就是卡在这里：只能靠报告里的分数反推出真实特征。
+  const unfilled = fields.filter(field => !itemByRef[field.ref]);
+  if (unfilled.length) {
+    lines.push('');
+    lines.push('── 未填写控件的原始特征（排查用）──');
+    lines.push('序号 | 类型 | 只读 | role | 标签与属性 | 章节');
+    unfilled.forEach((field) => {
+      lines.push([
+        String(fields.indexOf(field) + 1).padStart(3),
+        String(field.type || '').padEnd(14),
+        (field.readOnly ? '是' : '否').padEnd(4),
+        String(field.role || '∅').padEnd(10),
+        'label=' + (field.label || '∅') +
+        ' | ph=' + (field.placeholder || '∅') +
+        ' | aria=' + (field.ariaLabel || '∅') +
+        ' | name=' + (field.name || '∅') +
+        ' | nearby=' + (field.nearbyText || '∅'),
+        '[' + (field.sectionTexts || []).join(' / ') + ']'
+      ].join(' | '));
+    });
+  }
+
+  // 按原因码归类，给出针对性的下一步（用户不需要自己解读原因码）
+  const counts = {};
+  for (const entry of plan.manual) counts[entry.reason] = (counts[entry.reason] || 0) + 1;
+  const hints = [];
+  const assistedCount = plan.items.filter(item => item.assisted).length;
+  if (assistedCount) {
+    hints.push('有 ' + assistedCount + ' 个可搜索下拉框：已帮你填入关键词触发页面筛选，请从下拉候选里点选才算选中。');
+  }
+  if (counts['custom-select']) {
+    hints.push('有 ' + counts['custom-select'] + ' 个自定义下拉框：这类控件由页面脚本模拟，扩展无法可靠写入（写了不进组件状态），只能手动选择。');
+  }
+  const unrecognized = (counts.unknown || 0) + (counts.ambiguous || 0);
+  if (unrecognized) {
+    hints.push('有 ' + unrecognized + ' 个未能识别或含义不明确：到「设置」连接 AI 后重新扫描可提高识别率。');
+  }
+  if (counts['no-value']) hints.push('有 ' + counts['no-value'] + ' 个字段在简历里是空的：到第 1 步补充后重新扫描。');
+  if (counts['has-value']) hints.push('有 ' + counts['has-value'] + ' 个字段页面上已有内容：需要覆盖请打开「覆盖页面上已有内容」。');
+  if (counts.sensitive) hints.push('有 ' + counts.sensitive + ' 个敏感字段被跳过：需要填写请打开「包含敏感字段」。');
+  if (counts.region) hints.push('有 ' + counts.region + ' 个国家/地区选择框：这不属于简历内容，请按需手动选择。');
+  // 标签读不出来的字段要单独点名。它和「简历里没这项内容」是两回事，
+  // 用户看到「未能识别」会以为是自己简历缺东西，其实是我们读不到字段名。
+  const noLabel = unfilled.filter(field => !field.label).length;
+  if (noLabel) {
+    hints.push('有 ' + noLabel + ' 个控件没能读到字段名（label 为空）：不是你的简历缺内容，' +
+      '而是这个页面的标签结构扩展读不出来。上面「未填写控件的原始特征」里能看到每个控件实际读到了什么。');
+  }
+  if (hints.length) {
+    lines.push('');
+    lines.push('── 提示 ──');
+    for (const hint of hints) lines.push('· ' + hint);
+  }
+
+  return lines.join('\n');
+}
+
+async function copyAutofillDiagnostics() {
+  if (!autofillScan) {
+    autofillStatus('请先扫描页面，再导出诊断详情。');
+    return;
+  }
+  const report = buildAutofillDiagnosticReport();
+  try {
+    await navigator.clipboard.writeText(report);
+    autofillStatus('诊断详情已复制到剪贴板（' + report.split('\n').length + ' 行）。粘贴出来即可查看每个控件的识别情况。');
+  } catch (e) {
+    // 剪贴板被拒时不要让用户白点一次，把报告打到控制台兜底
+    console.log(report);
+    autofillStatus('复制失败（浏览器拒绝了剪贴板权限），诊断详情已输出到控制台。');
+  }
+}
 
 // ── 结果渲染 ──────────────────────────────────
 
@@ -1042,12 +2501,110 @@ async function getSettings() {
   return new Promise(resolve => chrome.storage.local.get(['apiUrl', 'apiKey', 'model'], resolve));
 }
 
-function getCompletionUrl(input) {
-  const base = input.replace(/\/+$/, '');
-  if (/\/chat\/completions$/i.test(base)) return base;
-  if (/\/v1$/i.test(base)) return `${base}/chat/completions`;
-  if (/api\.openai\.com$/i.test(base)) return `${base}/v1/chat/completions`;
-  return `${base}/chat/completions`;
+// ── 统一请求层 ────────────────────────────────
+// 从 generate() 中提出来，供「生成」与「结构化抽取」共用：
+// 超时兜底、取消、错误翻译、截断重试都只有这一处实现，避免两套逻辑走偏。
+// 地址补全用 common.js 的 resolveCompletionUrl，关闭思考用 common.js 的 applyThinkingOff。
+
+async function requestCompletion({ settings, promptText, maxTokens, temperature, requestKey }) {
+  const completionUrl = resolveCompletionUrl(settings.apiUrl);
+  const controller = new AbortController();
+  activeRequests[requestKey] = controller;
+
+  // 超时兜底：模型长时间无响应时主动中断，避免界面永久转圈
+  let timedOut = false;
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, API_TIMEOUT_MS);
+
+  // 发一次请求，返回 choices[0]。放大 max_tokens 重试时复用同一套请求构造。
+  const post = async (limit) => {
+    const body = {
+      model: settings.model || 'gpt-4.1-mini',
+      messages: [{ role: 'user', content: promptText }]
+    };
+    if (limit) body.max_tokens = limit;
+    if (temperature != null) body.temperature = temperature;
+    applyThinkingOff(body, body.model);
+
+    const response = await fetch(completionUrl, {
+      method: 'POST', signal: controller.signal, redirect: 'error', referrer: 'no-referrer',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.apiKey}` },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(describeHttpError(response.status, detail, settings.model));
+    }
+
+    const data = await response.json();
+    return { first: data.choices?.[0], choiceCount: data.choices?.length };
+  };
+
+  try {
+    let limit = maxTokens;
+    let { first, choiceCount } = await post(limit);
+    let content = first?.message?.content;
+    let reasoning = first?.message?.reasoning_content;
+
+    // 空正文 + 被截断：几乎可以确定是思考过程把配额吃光了。
+    // 自动放大上限再试一次，而不是把 max_tokens 这个概念甩给用户 —— 设置页里根本没这个入口。
+    if (!content && !reasoning && first?.finish_reason === 'length') {
+      const bigger = Math.max((limit || 3000) * 2, 8000);
+      console.warn('输出被截断且无正文，自动放大上限重试', {
+        model: settings.model, from: limit, to: bigger
+      });
+      const second = await post(bigger);
+      first = second.first;
+      choiceCount = second.choiceCount;
+      content = first?.message?.content;
+      reasoning = first?.message?.reasoning_content;
+      limit = bigger;
+    }
+
+    if (!content) {
+      console.error('API返回空内容', {
+        model: settings.model,
+        promptLen: promptText.length,
+        reasoningPresent: !!reasoning,
+        finish_reason: first?.finish_reason,
+        choices: choiceCount,
+        maxTokens: limit
+      });
+      if (reasoning) {
+        throw new Error(
+          `${settings.model} 开启了思考模式，${limit} tokens 的输出配额全被思考过程占用。`
+          + '请到「设置」改用非思考模型（如 deepseek-chat、gpt-4.1-mini、qwen-plus）。'
+        );
+      }
+      if (first?.finish_reason === 'length') {
+        throw new Error(
+          `${settings.model} 用完了 ${limit} tokens 却没输出正文（已自动放大上限重试过一次）。`
+          + '请到「设置」改用非思考模型，或缩短简历内容。'
+        );
+      }
+      throw new Error('AI返回内容为空：请确认模型名称正确、账号额度充足，或尝试更换模型。');
+    }
+    if (first?.finish_reason === 'length') {
+      console.warn('输出被 max_tokens 截断', { model: settings.model, maxTokens: limit });
+    }
+    return content;
+  } catch (error) {
+    // 用户主动取消：原样抛出，交给上层静默处理
+    if (error.name === 'AbortError') {
+      if (timedOut) throw new Error(describeTimeoutError());
+      throw error;
+    }
+    // 网络层 / 响应体异常：翻译成人话
+    if (error instanceof TypeError || error.name === 'SyntaxError') {
+      throw new Error(describeNetworkError(error));
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutTimer);
+  }
 }
 
 async function generate(mode) {
@@ -1065,18 +2622,18 @@ async function generate(mode) {
   // ── 校验：面试模式 ────────────────────────────
 
   if (mode === 'interview' && job.length < 20) {
-    $('status-message').textContent = '请先粘贴至少 20 个字的岗位职责或任职要求。';
-    jobInput.focus();
+    gotoMissingStep(false, '请先粘贴至少 20 个字的岗位职责或任职要求。');
     return;
   }
 
   // ── 校验：打招呼语 / 优化简历 ────────────────
 
-  if ((mode === 'greeting' || mode === 'optimize') && (job.length < 20 || !resumeText)) {
+  if ((mode === 'greeting' || mode === 'optimize') && (job.length < 20 || !hasResume())) {
     const missing = [];
-    if (job.length < 20) missing.push('岗位职责');
-    if (!resumeText) missing.push('简历文件');
-    $('resume-status').textContent = `请先填写：${missing.join('、')}。`;
+    if (job.length < 20) missing.push('岗位描述');
+    if (!hasResume()) missing.push('简历文件');
+    // 岗位更靠前，先补岗位；岗位齐了才把用户指回简历那一步
+    gotoMissingStep(job.length >= 20, `请先填写：${missing.join('、')}。`);
     return;
   }
 
@@ -1124,6 +2681,9 @@ async function generate(mode) {
       $('resume-status').textContent = '目前是演示内容。到"设置"连接 AI 服务后即可生成真实结果。';
     }
     stopGenerationProgress(mode);
+    // 演示分支也要同步向导状态：否则步骤条与结果滚动会与实际产出不一致
+    renderWizard();
+    scrollToResults(mode);
     return;
   }
 
@@ -1147,46 +2707,6 @@ async function generate(mode) {
   }
 
   // ── API 请求 ──────────────────────────────────
-
-  async function callApi(promptText, maxTokens, temperature) {
-    const completionUrl = getCompletionUrl(settings.apiUrl);
-    const controller = new AbortController();
-    activeRequests[mode] = controller;
-    const body = { model: settings.model || 'gpt-4.1-mini', messages: [{ role: 'user', content: promptText }] };
-    if (maxTokens) body.max_tokens = maxTokens;
-    if (temperature != null) body.temperature = temperature;
-    if (/deepseek/i.test(body.model)) body.thinking = { type: 'disabled' };
-
-    const response = await fetch(completionUrl, {
-      method: 'POST', signal: controller.signal, redirect: 'error', referrer: 'no-referrer',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.apiKey}` },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(describeHttpError(response.status, detail, settings.model));
-    }
-
-    const data = await response.json();
-    const first = data.choices?.[0];
-    const content = first?.message?.content;
-    if (!content) {
-      const reasoning = first?.message?.reasoning_content;
-      console.error('API返回空内容', {
-        model: settings.model,
-        promptLen: promptText.length,
-        reasoningPresent: !!reasoning,
-        finish_reason: first?.finish_reason,
-        choices: data.choices?.length
-      });
-      if (reasoning) {
-        throw new Error(`AI返回内容为空：${settings.model} 开启了思考模式，输出配额全被思考过程占用。请在模型文档中关闭思考模式，或更换为非思考模型。`);
-      }
-      throw new Error('AI返回内容为空，请检查模型名称是否正确，或尝试更换模型');
-    }
-    return content;
-  }
 
   function parseSections(raw) {
     const text = raw.replace(/```[\s\S]*?```/g, '').trim();
@@ -1234,7 +2754,10 @@ async function generate(mode) {
       if (mode === 'interview' && !step.isAnalysis && analysisRaw) {
         text = `${INTERVIEW_PREP_PROMPT}\n\n【岗位分析参考】\n${analysisRaw}\n\n用户输入岗位JD：\n${job}`;
       }
-      const raw = await callApi(text, step.tokens, step.temperature);
+      const raw = await requestCompletion({
+        settings, promptText: text, maxTokens: step.tokens,
+        temperature: step.temperature, requestKey: mode
+      });
       const sections = parseSections(raw);
       allSections.push(...sections);
       if (step.isAnalysis) analysisRaw = raw;
@@ -1254,12 +2777,15 @@ async function generate(mode) {
       $('resume-status').textContent = '已生成。建议逐条核对真实经历再使用。';
     }
     stopGenerationProgress(mode);
+    renderWizard();
+    scrollToResults(mode);
   } catch (error) {
     delete activeRequests[mode];
     chrome.storage.session.remove('generationInProgress');
     if (error.name === 'AbortError') return;
 
-    const errorInfo = [{ title: '生成失败', body: `调用AI服务时出错：${error.message}。请检查接口地址、API Key 和模型名称是否正确，或者稍后重试。`, list: false, suggestion: false }];
+    // 错误消息已在 common.js 中翻译为「发生了什么 + 该怎么办」，此处直接呈现，不再叠加笼统建议
+    const errorInfo = [{ title: '生成失败', body: error.message, list: false, suggestion: false }];
 
     if (mode === 'interview') {
       renderSections(errorInfo, 'interview');
@@ -1308,6 +2834,15 @@ document.addEventListener('click', async (e) => {
 $('analyze-button').addEventListener('click', () => generate('interview'));
 $('greeting-button').addEventListener('click', () => generate('greeting'));
 $('resume-button').addEventListener('click', () => generate('optimize'));
+$('autofill-button').addEventListener('click', openAutofill);
+
+// 网申预填面板
+$('autofill-rescan').addEventListener('click', openAutofill);
+$('autofill-confirm').addEventListener('click', () => confirmAutofill());
+$('autofill-clear').addEventListener('click', () => clearAutofillMarks());
+$('autofill-detail').addEventListener('click', () => copyAutofillDiagnostics());
+$('autofill-overwrite').addEventListener('change', rebuildAutofillPlan);
+$('autofill-sensitive').addEventListener('change', rebuildAutofillPlan);
 
 document.querySelector('.copy-interview').addEventListener('click', async () => {
   await navigator.clipboard.writeText(interviewPlainText);
@@ -1334,20 +2869,29 @@ document.querySelector('.export-interview').addEventListener('click', () => expo
 document.querySelector('.export-greeting').addEventListener('click', () => exportWithFeedback('greeting'));
 document.querySelector('.export-optimize').addEventListener('click', () => exportWithFeedback('optimize'));
 
-// ── 顶部标签切换（岗位分析 / 简历工具）──────────
+// ── 向导事件绑定 ──────────────────────────────
 
-(function initTabs() {
-  const tabs = Array.from(document.querySelectorAll('.tab'));
-  const panels = { analysis: $('tab-analysis'), resume: $('tab-resume') };
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const name = tab.dataset.tab;
-      tabs.forEach(t => {
-        const active = t === tab;
-        t.classList.toggle('is-active', active);
-        t.setAttribute('aria-selected', active ? 'true' : 'false');
-      });
-      Object.keys(panels).forEach(k => { panels[k].hidden = (k !== name); });
-    });
-  });
-})();
+document.querySelectorAll('.step-chip').forEach(chip => {
+  chip.addEventListener('click', () => setStep(chip.dataset.step));
+});
+
+$('skip-resume').addEventListener('click', () => {
+  wizard.skippedResume = true;
+  setStep('job', jobInput);
+});
+
+$('step-resume-next').addEventListener('click', () => {
+  if (!hasResume()) wizard.skippedResume = true;
+  setStep('job', jobInput);
+});
+
+$('step-resume-edit').addEventListener('click', () => setStep('resume'));
+$('step-job-back').addEventListener('click', () => setStep('resume'));
+$('step-job-next').addEventListener('click', () => setStep('output'));
+$('step-job-edit').addEventListener('click', () => setStep('job', jobInput));
+
+// 首屏：把初始步骤状态刷到 DOM 上（loadMemory 是异步的，这里保证不依赖它）
+renderWizard();
+
+// 首屏检查当前标签页是否可预填（只读 URL，不注入任何脚本）
+refreshAutofillAvailability().catch(() => {});

@@ -52,7 +52,8 @@ $('save-settings').addEventListener('click', () => {
   });
 });
 
-// ── 测试连接 ──────────────────────────────────
+// ── 连接诊断 ──────────────────────────────────
+// 不只报"成功/失败"，而是给出分类结论与下一步该做什么。
 
 $('test-connection').addEventListener('click', async () => {
   const apiUrl = $('api-url').value.trim();
@@ -70,39 +71,60 @@ $('test-connection').addEventListener('click', async () => {
     return;
   }
 
-  $('test-connection').textContent = '测试中…';
-  $('test-connection').disabled = true;
-  $('settings-status').textContent = '正在测试连接…';
+  const btn = $('test-connection');
+  btn.textContent = '诊断中…';
+  btn.disabled = true;
+  $('settings-status').textContent = '正在诊断连接…';
 
-  const base = apiUrl.replace(/\/+$/, '');
-  let url = base;
-  if (/\/chat\/completions$/i.test(url)) { /* already full */ }
-  else if (/\/v1$/i.test(url)) url = `${url}/chat/completions`;
-  else if (/api\.openai\.com$/i.test(url)) url = `${url}/v1/chat/completions`;
-  else url = `${url}/chat/completions`;
+  const url = resolveCompletionUrl(apiUrl);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, API_TIMEOUT_MS);
 
-  const testBody = { model: model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 5 };
-  if (/deepseek/i.test(model)) testBody.thinking = { type: 'disabled' };
+  // 诊断请求也要给足输出空间：推理模型的思考过程会占满配额，
+  // 原先的 max_tokens: 5 会让这类模型必然返回空正文
+  const testBody = { model: model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 1024 };
+  applyThinkingOff(testBody, model);
 
   try {
     const res = await fetch(url, {
-      method: 'POST', redirect: 'error', referrer: 'no-referrer',
+      method: 'POST', signal: controller.signal, redirect: 'error', referrer: 'no-referrer',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify(testBody)
     });
 
-    if (res.ok) {
-      $('settings-status').textContent = `连接成功！接口和模型 "${model}" 均可用。`;
-    } else {
+    if (!res.ok) {
       const detail = await res.text();
       $('settings-status').textContent = describeHttpError(res.status, detail, model);
+      return;
     }
-  } catch (e) {
-    $('settings-status').textContent = `连接失败：${e.message}`;
-  }
 
-  $('test-connection').textContent = '测试连接';
-  $('test-connection').disabled = false;
+    // HTTP 200 不等于可用：思考型模型可能把输出配额全用在思考上，
+    // 返回 200 但没有正文。这种情况必须在这里就报出来，
+    // 否则用户会以为配置没问题，直到真正生成时才发现失败。
+    const data = await res.json().catch(() => null);
+    const first = data && Array.isArray(data.choices) ? data.choices[0] : null;
+    const content = first && first.message && first.message.content;
+    if (!content) {
+      const thinking = first && first.message && first.message.reasoning_content;
+      $('settings-status').textContent = thinking
+        ? `接口通、Key 有效，但模型「${model}」把输出配额全用在思考过程上了，正文为空。请改用非思考模型（如 deepseek-chat、gpt-4.1-mini、qwen-plus），否则生成与解析都会失败。`
+        : `接口与 Key 都正常，但模型「${model}」没有返回正文。请确认模型名与服务商文档完全一致、账号额度充足，或更换模型。`;
+      return;
+    }
+    $('settings-status').textContent = `连接正常：接口与模型「${model}」均可用，保存后即可在侧边栏使用。`;
+  } catch (e) {
+    $('settings-status').textContent = (e.name === 'AbortError' && timedOut)
+      ? describeTimeoutError()
+      : describeNetworkError(e);
+  } finally {
+    clearTimeout(timeoutTimer);
+    btn.textContent = '连接诊断';
+    btn.disabled = false;
+  }
 });
 
 // ── 关闭页面 ──────────────────────────────────
