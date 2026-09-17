@@ -37,8 +37,9 @@
 - **结构化抽取也是纯文本**（`prompts/resume-extract.md`）：输出格式为 `## 分组名` + 每组内 `字段名：值` 行，多条经历就重复写同名分组。解析在 `profile.js` 的 `parseProfileText()`，字段名用中文标签匹配（含别名表），认不出的行按上一字段续行处理，认不出的分组直接丢弃——**宁缺勿错，绝不猜**。解析失败时抛出错误，由调用方降级到本地规则解析，不让用户卡住。
   - **只输出有值的字段，空字段整行省略，整组为空则整组省略**。留 `姓名：` 这种空行占位对解析毫无帮助，只会白白消耗输出额度、更容易撞上长度上限。这条约束让输出 token 少了约一半。
   - 提示词里有「常见排版与切分方法」一节，专门教模型处理**真实简历的排版**：一行里挤着「时间 + 公司 + 职位」怎么拆、条目下方的「小标题 + 要点」整段归给工作内容、项目角色单独占一行、荣誉奖项要拆开并按含金量排序。**本地规则与 AI 两边都要认识同一批排版**，改了一边务必同步另一边。
-- **表单语义映射也是纯文本**（`prompts/form-map.md`）：AI 只从固定语义枚举（41 个 id）里选一个，输出 `序号<TAB>语义` 或 `序号<TAB>?`。解析在 `popup.js` 的 `parseFormMapResponse()`，语义不在枚举里的一律丢弃。**AI 只决定「这个字段是什么意思」，填什么值完全由本地 `form-fill.js` 取值层决定**——因为值取错是事实性错误，语义判错只是少填一项。AI 的判断以 `hint` 形式参与打分，不直接覆盖本地结果。
-- **max_tokens 按 Prompt 分配**：岗位分析 2500、面试准备 4000、打招呼语 800、优化简历 5000、结构化抽取 6000、表单语义映射 2000。数值作为硬上限兜底，实际输出靠 Prompt 内字数约束控制。
+- **表单语义映射也是纯文本**（`prompts/form-map.md`）：AI 只从固定语义枚举（85 个 id）里选一个，输出 `序号<TAB>语义` 或 `序号<TAB>?`。解析在 `popup.js` 的 `parseFormMapResponse()`，语义不在枚举里的一律丢弃。**AI 只决定「这个字段是什么意思」，填什么值完全由本地 `form-fill.js` 取值层决定**——因为值取错是事实性错误，语义判错只是少填一项。AI 的判断以 `hint` 形式参与打分，不直接覆盖本地结果。
+  - ⚠️ **枚举清单必须与 `FILL_RULES` 同步，`tests/form-fill.test.js` 第 20 节盯着这件事**（语义不能漏、不能多、12 个分组不能缺）。这条断言是为一次真实事故加的：`FILL_RULES` 从 41 条扩到 85 条时提示词还停在旧的 24 个语义上，而没有任何测试看着它 —— AI 映射只能返回旧词，新分组的字段一律救不回来，而且不报错。新增字段规则后必须同步 `prompts/form-map.md` 的枚举段落。
+- **max_tokens 按 Prompt 分配**：岗位分析 2500、面试准备 4000、打招呼语 800、优化简历 5000、结构化抽取 8000、表单语义映射 2000。数值作为硬上限兜底，实际输出靠 Prompt 内字数约束控制。结构化抽取给到 8000 是因为字段表扩到 12 组后条目明显变多，6000 有截断风险。
 - **截断问题双管齐下**：Prompt 侧限制字数范围 + 代码侧设 max_tokens 兜底。两者配合，既不让 AI 失控写太长，也不截断关键内容。
 - **思考模式必须关闭（不只是 DeepSeek）**：结构化抽取、字段语义映射、连接诊断都不需要推理，而思考过程会占满 `max_tokens`，`finish_reason` 变成 `length` 且正文为空。统一走 `common.js` 的 `applyThinkingOff()`：Qwen 系列发 `enable_thinking: false`，DeepSeek / GLM / 豆包 / 混元发 `thinking: {type: 'disabled'}`，**白名单以外一律不发**——给不支持的平台发未知参数会直接 400，那比思考吃光配额更糟。
 - **截断自愈**：空正文 + `finish_reason === 'length'` + 无 `reasoning_content` 时，`requestCompletion` 自动把上限放大到 `max(2×, 8000)` 重试一次。用户不该被迫理解 max_tokens 是什么——设置页里根本没有这个入口，旧文案「请调大该模型的输出上限」是个做不到的建议。有 `reasoning_content` 时不重试（重试也一样吃光，白花钱）。
@@ -54,8 +55,8 @@
 | `options.html` / `options.js` | 设置页（API 配置 + 连接诊断） |
 | `common.js` | 跨页面共用：接口地址补全 `resolveCompletionUrl`、错误翻译 `describeHttpError` / `describeTimeoutError` / `describeNetworkError`、`API_TIMEOUT_MS` |
 | `resume-text.js` | **简历文本还原层**（无 DOM 依赖，可在 node 下测试）：把 PDF 片段重建成有行结构的文本 `rebuildPdfLines`、规整 TXT/MD/DOCX 来源 `normalizeResumeText`。**这一层错了后面全错**，详见「简历文本还原约定」 |
-| `profile.js` | **结构化简历数据层**（无 DOM 依赖，可在 node 下测试）：六组字段 schema、别名归并 `normalizeProfile`、文本解析 `parseProfileText`、本地规则兜底 `extractProfileLocally`、经历条目解析 `localExtractExperience` / `localExtractProjects`、预填清单 `flattenProfile`、路径读写 `getProfilePath` / `setProfilePath` |
-| `form-fill.js` | **网申预填语义引擎**（无 DOM 依赖，可在 node 下测试）：41 条字段规则 `FILL_RULES`、打分 `classifyFillField`、阻断 `blockFillField`、取值 `resolveFillValue`、选项匹配 `matchFillOption`、填写计划 `createFillPlan`、原因文案 `FILL_REASONS`。顶层禁止副作用（被 `new Function` 加载测试）。不依赖 `profile.js`：分组是对象还是列表由 `Array.isArray` 判断 |
+| `profile.js` | **网申字段表 · 数据层**（无 DOM 依赖，可在 node 下测试）：**12 组字段 schema**（与网申表单逐栏对齐）、别名归并 `normalizeProfile`、v1→v2 迁移 `migrateProfile`、文本解析 `parseProfileText`、本地规则兜底 `extractProfileLocally`、经历条目解析 `localExtractExperience` / `localExtractProjects` / `localExtractHeaded`、手工改动优先的合并 `mergeProfile`、脏标记 `markProfileDirty` / 删除名单 `markProfileRemoved`、派生回退 `applyProfileDerived`、预填清单 `flattenProfile`、缺失统计 `profileEmptyPaths`、路径读写 `getProfilePath` / `setProfilePath`。约定见「字段表与智能合并约定」 |
+| `form-fill.js` | **网申预填语义引擎**（无 DOM 依赖，可在 node 下测试）：**85 条字段规则** `FILL_RULES`（12 组）、打分 `classifyFillField`、阻断 `blockFillField`、取值 `resolveFillValue`、选项匹配 `matchFillOption`、填写计划 `createFillPlan`、原因文案 `FILL_REASONS`。顶层禁止副作用（被 `new Function` 加载测试）。不依赖 `profile.js`：分组是对象还是列表由 `Array.isArray` 判断 |
 | `form-fill-page.js` | 网申预填的 content script：采集控件特征（`form:scan`）、写入值（`form:fill`）、清除标记（`form:clear`）。三个分支都是同步应答，**不需要 `return true`** |
 | `prompts.js` + `prompts/*.md` | 提示词以 Markdown 外置维护，`prompts.js` 负责加载（含 `form-map.md` 表单语义映射） |
 | `background.js` | Service Worker，复制保护状态持久化 |
@@ -120,6 +121,36 @@
 - **项目角色词要整体匹配**：`产品负责人` 要整体识别，只认「负责人」会把「产品」留在项目名里；`学员-TOP20` 要连后缀匹配，否则项目名尾巴上会粘一个孤零零的 `-TOP20`。
 - **角色单独占一行时也算角色**（如「独立作者」），且不能混进项目描述；只在首行 ≤ 12 字时才认，避免描述正文里的「负责人」被误判。
 
+## 字段表与智能合并约定
+
+字段表是**网申表单的镜像**，12 组按参考表单的栏目顺序排列，是预填与所有生成的唯一数据源。分组 id 沿用旧英文名（`basic` 不改成 `personal`），这样 `form-fill.js` 的规则表与别名表改动面最小。
+
+| 分组 | 类型 | 说明 |
+|---|---|---|
+| `basic` 个人信息 / `intent` 求职意向 / `extra` 附加信息 | 对象型 | 一人一份 |
+| `education` `experience` `projects` `campusRole` `campusPractice` `skills` `honors` `languages` `certificates` | 列表型 | 可加多条 |
+
+三条不变量（改数据层前先读）：
+
+- **`_id` 是条目的稳定身份**，由 `createEmptyItem()` 生成。**绝不能按数组下标记脏标记** —— 用户删掉中间一条，后面所有下标错位，脏标记会串到别的经历上。
+- **`_dirty` 记录「哪些字段是用户手工填的」**，挂在条目上（对象型分组挂在分组上）。`markProfileDirty()` 在 `popup.js` 的 `input` 事件里调用。
+- **`_removed` 记录被用户删掉的条目**（按 `PROFILE_MATCH_KEYS` 的对齐键记指纹）。少了它会出现「用户删了某段经历，重新解析又把它拉回来」——用户会以为删除没生效。
+
+重新解析走 `mergeProfile()`，**手工改动优先**：
+
+1. 对象型：`_dirty` 里的 key 保留用户的；其余 key 本次解析有值就用新值，没值保留旧值（不清空）
+2. 列表型：按对齐键匹配已有条目后逐字段合并（同样规则），匹配不到的追加为新条目，已有但没被匹配到的原样保留
+3. 命中 `_removed` 的条目直接丢弃，不再追加
+4. 合并结果必须如实告知更新了几项、保留了几项、新增了几段——沿用「多分支文案先拼公共部分再各自补尾」的老约定
+
+对齐键（`PROFILE_MATCH_KEYS`）：教育用 `school`、实习用 `company`、项目/在校实践/技能/获奖/证书用 `name`、在校职务用 `title`、语言用 `type`。
+
+**派生回退**（`applyProfileDerived`）：`basic` 里的最高学历 / 最高学位 / 专业名称 / 毕业学校留空时，从教育经历里学历最高、时间最近那一条带出。这四项在参考表单里是教育经历的**重复问法**，用户只该填一处。`popup.js` 的 `structuredProfile()` 传给预填的就是派生后的副本，**任何新的预填入口都必须走它**，否则这四个字段会静默变空。
+
+`prompts/resume-extract.md` 里对应地**要求 AI 不要抽取这四项**（只写教育经历那一次），AI 抽了反而会和生产环境的派生值打架。
+
+**必填与缺失**（`PROFILE_REQUIRED_KEYS`，12 项）：个人信息 5 项（姓名 / 手机号码 / 邮箱 / 性别 / 出生日期）、求职意向 1 项（期望工作城市）、教育经历 6 项。列表型分组的必填对**每一条**生效；整组一条都没有时算作缺这些必填 —— 这比报「0 项」有用，用户一看就知道该先加一条。
+
 ## 页面注入约定（JD 抓取 / 网申预填）
 
 复用 `manifest.json` 里已注入的 content script 通道，**不新增任何权限、不做运行时脚本注入**（`permissions` 至今只有 `storage` / `sidePanel` / `tabs`，`host_permissions` 沿用既有的 `http(s)://*/*`）。
@@ -145,7 +176,17 @@
 - **宁缺勿错**：打分低于 `7.5` 不认，与次优解分差小于 `0.9` 判为「不明确」，两者都交给用户手填。认不出的字段必须给出**具体原因文案**（`FILL_REASONS` 每个码都有 `title` + `detail`，测试有断言查缺）。
 - **排除词 `not` 只在 `attr` / `label` 层生效**：用于挡住「公司规模」「学校性质」这类被泛词误命中的字段。不看 `near` 层——同区块其它字段的文字会造成误伤。
 - **同名词条分处两组时靠章节归组消歧，别删掉任何一侧**：`department` 在教育组是「学院」、在实习组是「部门」；`职务` 在项目组是「项目角色」、在实习组是「职位」；`职务描述` 同理。章节认不出来时会判「含义不明确」交用户手填——这是**有意的**，比随便挑一个填错好。
-- **章节关键词要覆盖真实系统的叫法**：北森的「实践经历」独立于「项目经历」，且字段叫「实践名称 / 实践描述」，schema 里没有实践分组，归到 `projects`。新增章节词时注意别用 `实践` 这种裸词（会误命中「实习实践」），用 `实践经历 / 社会实践 / 校园实践` 这类复合词。
+- **⚠️ 章节关键词搬家时「改一边忘另一边」会在这里炸**：字段表从 6 组扩到 12 组时，`FILL_SECTION_KEYWORDS` 有四处必须跟着搬，否则新老两组会互相抢填同一个表单栏：
+  - 「实践经历 / 社会实践 / 校园实践 / 实践项目 / 实践信息」从 `projects` → `campusPractice`
+  - 「其他信息 / 补充信息」从 `skills` → `extra`
+  - 「技能证书」拆开：「技能」→ `skills`、「证书」→ `certificates`
+  - 「获奖情况 / 荣誉奖项 / 语言能力」从 `skills` → `honors` / `languages`
+  - 同时 `projects.name` 的「实践名称 / 实践项目 / 实践课题」要移给 `campusPractice.name`，`projects.description` 的「实践描述 / 实践内容」要移给 `campusPractice.description`
+  - `tests/form-fill.test.js` 第 15 节是**源码级**回归（扫源码查这些词有没有留在旧组里），改一边忘另一边会立刻报错。
+  - 新增章节词时注意别用 `实践` 这种裸词（会误命中「实习实践」），用 `实践经历 / 社会实践 / 校园实践` 这类复合词。
+- **⚠️ 个人信息区块的「学历 / 专业名称 / 毕业学校」取的是「最高那一档」，不是第 0 条**：校招简历常见本科在前、硕士在后，按 `education[0]` 取会把硕士填成本科 —— 那是事实性错误，比不填更糟。判定靠**所在章节**（`sectionGroup === 'basic'`），不靠关键词：同一个「专业名称」在教育经历区块里是这一条的专业，在个人信息区块里是最高学历的专业。两个方向都有断言守着（`tests/form-fill.test.js` 第 19 节）。章节认不出来时保持原行为（第 0 条），不猜。
+- **「最高学历 / 最高学位」是两个独立的语义**（`basic.degree` / `basic.degreeLevel`），值取派生后的 `basic`。`education.degree` 的 `not` 里必须有 `最高`，否则「最高学历」会落回 `education.degree` 取下第一条经历。
+- **「至今」是独立复选框**：`endDate` 值为「至今」时才勾，同时不往结束时间框里写「至今」三个字。没勾不等于缺数据，用 `not-ongoing` 的专门文案说明，别让用户以为漏了。
 - **拉丁词必须词边界匹配**：`search` 会误杀 `researchExperience`，所以拉丁阻断词走 `(^|[^a-zA-Z])(...)([^a-zA-Z]|$)`，中文用子串。新增阻断词时两处都要照顾。
 - **受控组件写入必须走原型 setter**：`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v)` 绕过 React 实例上的 value tracker，再派发冒泡的 `input` + `change`。`el.value = x` 会被记成「值没变」，`onChange` 不触发。`radio` / `checkbox` 优先 `el.click()`（React 正是从 click 推导 onChange）。
 - **`displayValue` 必须是人能读懂的**：`<option value="1">男</option>` 写入的是 `"1"`，但清单要显示「男」。核对界面给用户看 value 等于没给核对能力。见 `form-fill.js` 的 `fillDisplayValue()`。
@@ -181,10 +222,16 @@
 ```bash
 node tests/common.test.js      # 共用层：关思考平台白名单、地址补全、错误文案
 node tests/resume-text.test.js # 文本还原：PDF 行重建、行内空格、续行合并（5 种不该合并的情况）
-node tests/profile.test.js     # 数据层：字段规整、别名、文本解析、本地兜底、经历提取（两种日期排版）、敏感字段过滤
-node tests/form-fill.test.js   # 预填算法：正向必认出、反向必认不出、阻断规则、选项匹配、经历推进、新旧字段互斥、真机报告驱动用例
+node tests/profile.test.js     # 数据层：12 组结构、字段规整、分组内别名、v1→v2 迁移不丢字段、派生回退、智能合并、
+                              #        脏标记与删除名单、必填与缺失统计、文本解析、本地兜底、经历提取（两种日期排版）、
+                              #        提示词与 schema 一致性
+node tests/form-fill.test.js   # 预填算法：正向必认出、反向必认不出、阻断规则、选项匹配、经历推进、新旧字段互斥、
+                              #        章节关键词搬家（源码级）、「至今」勾选、个人信息区块取「最高那一档」、
+                              #        form-map.md 与 FILL_RULES 枚举一致性、真机报告驱动用例
 node tests/form-fill-page.test.js # 内容脚本：标签解析（区块反推）、无语义文字识别、控件类型判定
-node tests/render.test.js      # 渲染层：DOM 桩里真实执行 popup.js，验面板渲染、转义安全、向导流转、抓取与预填状态机、请求重试与降级、诊断报告
+node tests/render.test.js      # 渲染层：DOM 桩里真实执行 popup.js，验面板渲染、转义安全、向导流转、字段表折叠与必填标记、
+                              #        补充引导的缺失统计、重新解析时手工内容保留与删除不复活、抓取与预填状态机、
+                              #        请求重试与降级、诊断报告
 node tests/jd-extract.test.js  # JD 提取：打分权重回归（JD 必须胜出、导航/列表/页脚必须落选）、清洗规则
 node tests/make-preview.js     # 可选：生成 向导预览.html，肉眼检查向导排版
 ```

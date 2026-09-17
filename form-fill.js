@@ -53,18 +53,28 @@ const FILL_REGION_ONLY_RE = /^(中国)?(大陆|内地|香港|澳门|台湾|境�
 const FILL_DEFAULT_SENSITIVE = ['idCard', 'bankAccount', 'homeAddress', 'emergencyContact'];
 
 // ── 章节关键词（用于把字段归到哪一组）───────────
-
+//
+// ⚠️ 12 组里有几组的关键词长得像，动这张表前先看清三条：
+//   · 「实践」类词汇归 campusPractice，不能留在 projects ——
+//     北森等系统的「实践经历」独立于「项目经历」，留在 projects 会让两组抢填同一栏
+//   · 「其他信息 / 补充信息」归 extra，不能留在 skills
+//   · 「技能证书」这种混排标题归 skills（它是技能这一桶），
+//     「资格证书 / 证书情况」归 certificates。resolveSectionGroup 取最长匹配，
+//     所以「技能证书」不会因为含「证书」二字被判给 certificates
 const FILL_SECTION_KEYWORDS = {
   basic: ['基础信息', '基本信息', '个人信息', '基本资料', '个人资料', '联系方式', '基础资料', 'basicinfo', 'personalinfo'],
   intent: ['求职意向', '应聘意向', '求职意愿', '意向信息', '求职期望', 'jobintention', 'expectation'],
   education: ['教育经历', '教育背景', '教育信息', '学历信息', '学习经历', '教育情况', 'education'],
   experience: ['工作经历', '实习经历', '工作经验', '实习经验', '工作与实习', '职业经历', '工作履历', 'experience', 'employment'],
-  projects: ['项目经历', '项目经验', '项目信息', '科研经历',
-    // 北森等系统的「实践经历」是独立于「项目经历」的一栏，字段叫实践名称/实践描述。
-    // schema 里没有单独的实践分组，归到 projects 最贴近（都是「做过什么」）。
-    '实践经历', '社会实践', '校园实践', '实践项目', '实践信息', 'projects'],
-  skills: ['专业技能', '技能证书', '技能特长', '获奖情况', '荣誉奖项', '语言能力', '自我评价', '其他信息',
-    '技能与补充', '证书', '技能', 'skills', 'certificates']
+  projects: ['项目经历', '项目经验', '项目信息', '科研经历', 'projects'],
+  campusRole: ['在校职务', '校园职务', '校内职务', '学生职务', '学生工作', '社团职务', '社团经历', '学生会', 'campusrole', 'studentwork'],
+  campusPractice: ['在校实践', '社会实践', '校园实践', '实践活动', '实践经历', '实践项目', '实践信息',
+    '志愿活动', '志愿服务', 'campuspractice', 'socialpractice'],
+  extra: ['附加信息', '其他信息', '补充信息', '兴趣爱好', '兴趣特长', '个人特长', 'additional'],
+  skills: ['专业技能', '技能特长', '技能证书', '技能与补充', '技能', 'skills'],
+  honors: ['获奖情况', '荣誉奖项', '获奖经历', '获奖记录', '荣誉证书', '荣誉', '奖项', '奖励', 'honors', 'awards'],
+  languages: ['语言能力', '语言水平', '外语水平', '语言等级', '语言', 'languages'],
+  certificates: ['资格证书', '证书情况', '证书信息', '证书', 'certificates']
 };
 
 // HTML autocomplete 标准值 → 语义 id
@@ -153,6 +163,10 @@ const FILL_RULES = [
     hi: ['政治面貌', '政治身份', 'politicalstatus', 'political'], lo: []
   },
   {
+    id: 'basic.ethnicity', group: 'basic', key: 'ethnicity', types: ['select', 'text', 'combobox'],
+    hi: ['民族', 'ethnicity', 'ethnic'], lo: []
+  },
+  {
     id: 'basic.idCard', group: 'basic', key: 'idCard', types: ['text', 'number'],
     hi: ['身份证号码', '身份证号', '身份证', '证件号码', 'idcard', 'idnumber', 'identitycard'],
     lo: ['证件号']
@@ -170,6 +184,22 @@ const FILL_RULES = [
   {
     id: 'basic.emergencyContact', group: 'basic', key: 'emergencyContact', types: ['text'],
     hi: ['紧急联系人', '紧急联系电话', 'emergencycontact'], lo: ['emergency']
+  },
+  // 「最高学历 / 最高学位」是个人信息栏独有的两个字段：问的是「最高那一档」，
+  // 不是某一条教育经历的学历。值取 profile.basic 里的派生值（由
+  // profile.js 的 applyProfileDerived 从教育经历里挑学历最高的一条带出），
+  // 因此用户只需要在教育经历里填一遍，两栏都能填上。
+  {
+    id: 'basic.degree', group: 'basic', key: 'degree', types: ['select', 'radio', 'text', 'combobox'],
+    hi: ['最高学历', 'highesteducation', 'educationlevelhighest'],
+    lo: ['学历'],
+    not: ['专业', '学校', '学院', '证书', '验证']
+  },
+  {
+    id: 'basic.degreeLevel', group: 'basic', key: 'degreeLevel', types: ['select', 'radio', 'text', 'combobox'],
+    hi: ['最高学位', '学位层次', 'highestdegree'],
+    lo: ['学位'],
+    not: ['学历', '专业', '学校', '学院', '证书', '验证']
   },
 
   // ── 求职意向 ──────────────────────────────
@@ -223,9 +253,13 @@ const FILL_RULES = [
   },
   {
     id: 'education.degree', group: 'education', key: 'degree', types: ['select', 'radio', 'text', 'combobox'],
-    hi: ['最高学历', '学历层次', '学历', '学位', '文化程度', 'educationlevel', 'degreetype'],
+    // ⚠️ 「最高学历」必须留给 basic.degree（见下）。它问的是「最高那一档」，
+    // 不是「某一条经历的学历」——留在 education 里会取下第一条经历，
+    // 用户填了硕士却被填成第一条的本科，是事实性错误。
+    hi: ['学历层次', '学历', '学位', '文化程度', 'educationlevel', 'degreetype'],
     lo: ['degree', 'education', 'qualification'],
-    not: ['专业', '学校', '学院', '证书', '验证']
+    // 「最高」前缀的字段一律不由经历条目回答（教育经历区块里不会出现「最高」二字）
+    not: ['专业', '学校', '学院', '证书', '验证', '最高']
   },
   {
     id: 'education.studyMode', group: 'education', key: 'studyMode', types: ['select', 'radio', 'text', 'combobox'],
@@ -261,6 +295,10 @@ const FILL_RULES = [
   {
     id: 'education.range', group: 'education', key: 'range', types: ['text'],
     hi: ['就读起止时间', '在校起止时间', '起止时间', '在校时间', '就读时间', '学习时间', 'educationperiod'], lo: []
+  },
+  {
+    id: 'education.ongoing', group: 'education', key: 'ongoing', types: ['checkbox'], optional: true,
+    hi: ['至今', '在读', '仍在读', '目前在校'], lo: []
   },
 
   // ── 工作与实习 ──────────────────────────────
@@ -317,11 +355,17 @@ const FILL_RULES = [
     id: 'experience.range', group: 'experience', key: 'range', types: ['text'],
     hi: ['任职起止时间', '工作起止时间', '在职时间', '任职时间', '实习时间', 'employmentperiod'], lo: []
   },
+  {
+    id: 'experience.ongoing', group: 'experience', key: 'ongoing', types: ['checkbox'], optional: true,
+    hi: ['至今', '仍在职', '目前在职'], lo: []
+  },
 
   // ── 项目经历 ──────────────────────────────
   {
     id: 'projects.name', group: 'projects', key: 'name', types: ['text'],
-    hi: ['项目名称', '项目名', '实践名称', '实践项目', '实践课题', 'projectname'], lo: ['项目'],
+    // 「实践名称 / 实践项目 / 实践课题」已移给 campusPractice.name：
+    // 它们属于在校实践那一栏，留在这里会和真正的项目名抢字段
+    hi: ['项目名称', '项目名', 'projectname'], lo: ['项目'],
     not: ['公司', '学校', '企业', '单位', '经历', '描述', '职责', '周期', '时间']
   },
   {
@@ -331,7 +375,7 @@ const FILL_RULES = [
   },
   {
     id: 'projects.description', group: 'projects', key: 'description', types: ['textarea', 'text'],
-    hi: ['项目描述', '项目简介', '项目内容', '项目介绍', '实践描述', '实践内容', '职务描述',
+    hi: ['项目描述', '项目简介', '项目内容', '项目介绍', '职务描述',
       '职责描述', 'projectdescription'],
     lo: ['描述', '简介']
   },
@@ -355,66 +399,226 @@ const FILL_RULES = [
     id: 'projects.range', group: 'projects', key: 'range', types: ['text'],
     hi: ['项目起止时间', '项目周期', '项目时间', 'projectperiod'], lo: []
   },
+  {
+    id: 'projects.ongoing', group: 'projects', key: 'ongoing', types: ['checkbox'], optional: true,
+    hi: ['至今', '仍在进行', '目前仍在'], lo: []
+  },
 
-  // ── 技能与补充 ──────────────────────────────
+  // ── 在校职务 ──────────────────────────────
+  // 「职务」在项目组是项目角色、在这里是在校职务。章节认不出来时判「含义不明确」
+  // 交用户手填 —— 这是有意的，比随便挑一个填错好
   {
-    id: 'skills.skillTags', group: 'skills', key: 'skillTags', types: ['textarea', 'text'],
-    hi: ['专业技能', '技能特长', '计算机水平', '技能标签', '掌握技能', '技能描述', '技能名称',
-      '技能类别', 'skilltags'], lo: ['技能']
+    id: 'campusRole.title', group: 'campusRole', key: 'title', types: ['text', 'select', 'combobox'],
+    hi: ['职务名称', '学生职务', '社团职务', '担任职务', '校内职务', 'campusrole'],
+    lo: ['职务', '角色'],
+    not: ['公司', '单位', '项目', '描述', '职责', '时间', '内容']
   },
   {
-    id: 'skills.languages', group: 'skills', key: 'languages', types: ['textarea', 'text', 'select'],
-    hi: ['外语水平', '语言能力', '语言等级', 'languagelevel'], lo: ['语言', '外语']
+    id: 'campusRole.description', group: 'campusRole', key: 'description', types: ['textarea', 'text'],
+    hi: ['职务描述', '职务内容', '职务职责', '工作内容描述'], lo: ['描述', '职责']
   },
   {
-    id: 'skills.certificates', group: 'skills', key: 'certificates', types: ['textarea', 'text'],
-    hi: ['证书名称', '资格证书', '获得证书', '职业资格', '证书情况', '证书描述', '证书说明',
-      'certificates', 'certifications'],
-    lo: ['证书'],
-    // 「荣誉奖项」「获奖情况」现在有独立字段：网申里它们是两个栏目，
-    // 且荣誉要按含金量分级填，混进证书栏会让用户后续填错位置
-    not: ['荣誉', '奖项', '获奖', '奖学金', '称号', '编号', '代码']
+    id: 'campusRole.startDate', group: 'campusRole', key: 'startDate', types: ['date', 'month', 'text', 'number', 'select'],
+    hi: ['任职开始时间', '担任开始时间'], lo: ['开始时间']
   },
   {
-    id: 'skills.honors', group: 'skills', key: 'honors', types: ['textarea', 'text'],
-    hi: ['荣誉奖项', '获奖情况', '获奖经历', '获奖记录', '所受奖励', '荣誉称号', '荣誉证书',
-      '获奖项', '获奖描述', '奖项名称', '奖项描述', '荣誉名称', 'honors', 'awards'],
-    lo: ['荣誉', '奖项', '获奖', '奖励', '奖学金'],
-    not: ['编号', '代码']
+    id: 'campusRole.endDate', group: 'campusRole', key: 'endDate', types: ['date', 'month', 'text', 'number', 'select'],
+    hi: ['任职结束时间', '担任结束时间', '离任时间'], lo: ['结束时间']
   },
   {
-    id: 'skills.selfEvaluation', group: 'skills', key: 'selfEvaluation', types: ['textarea', 'text'],
+    id: 'campusRole.range', group: 'campusRole', key: 'range', types: ['text'],
+    // 不含「任职起止时间」：那个词是实习区块的写法，两边都写会在没有章节线索时
+    // 判成「含义不明确」而白白丢掉一次可填机会
+    hi: ['在校职务时间', '学生工作起止时间', '社团任职时间'], lo: []
+  },
+  {
+    id: 'campusRole.ongoing', group: 'campusRole', key: 'ongoing', types: ['checkbox'], optional: true,
+    hi: ['至今', '仍在任', '现在仍在'], lo: []
+  },
+
+  // ── 在校实践 ──────────────────────────────
+  {
+    id: 'campusPractice.name', group: 'campusPractice', key: 'name', types: ['text'],
+    hi: ['实践名称', '实践活动名称', '活动名称', '实践项目', '实践课题', 'campuspractice'],
+    lo: ['实践'],
+    not: ['公司', '学校', '企业', '单位', '描述', '职责', '时间', '成果', '内容']
+  },
+  {
+    id: 'campusPractice.description', group: 'campusPractice', key: 'description', types: ['textarea', 'text'],
+    // 不含「实践成果」：那是产出，不是这次实践做了什么。填错位置比不填更糟
+    hi: ['实践描述', '实践内容', '实践经历描述'], lo: ['描述']
+  },
+  {
+    id: 'campusPractice.startDate', group: 'campusPractice', key: 'startDate', types: ['date', 'month', 'text', 'number', 'select'],
+    hi: ['实践开始时间', '活动开始时间'], lo: ['开始时间']
+  },
+  {
+    id: 'campusPractice.endDate', group: 'campusPractice', key: 'endDate', types: ['date', 'month', 'text', 'number', 'select'],
+    hi: ['实践结束时间', '活动结束时间'], lo: ['结束时间']
+  },
+  {
+    id: 'campusPractice.range', group: 'campusPractice', key: 'range', types: ['text'],
+    hi: ['实践起止时间', '实践时间', '活动时间'], lo: []
+  },
+  {
+    id: 'campusPractice.ongoing', group: 'campusPractice', key: 'ongoing', types: ['checkbox'], optional: true,
+    hi: ['至今', '仍在进行'], lo: []
+  },
+
+  // ── 附加信息 ──────────────────────────────
+  {
+    id: 'extra.hobby', group: 'extra', key: 'hobby', types: ['textarea', 'text'],
+    hi: ['兴趣爱好', '业余爱好', '个人爱好', 'hobby'], lo: ['爱好', '兴趣']
+  },
+  {
+    id: 'extra.strength', group: 'extra', key: 'strength', types: ['textarea', 'text'],
+    hi: ['个人特长', '特长', '专长', 'strongpoint'], lo: []
+  },
+  {
+    id: 'extra.selfEvaluation', group: 'extra', key: 'selfEvaluation', types: ['textarea', 'text'],
     hi: ['自我评价', '个人评价', '自我介绍', '个人总结', '自荐理由', 'selfevaluation', 'selfintroduction', 'summary'],
     lo: ['评价', '简介']
   },
   {
-    id: 'skills.portfolio', group: 'skills', key: 'portfolio', types: ['textarea', 'text', 'url'],
+    id: 'extra.portfolio', group: 'extra', key: 'portfolio', types: ['textarea', 'text', 'url'],
     hi: ['作品集链接', '作品链接', '个人主页', '博客地址', '作品展示', 'portfolio', 'homepage'], lo: ['作品', '主页', '链接']
+  },
+
+  // ── 技能 ──────────────────────────────────
+  // 表单里技能有两种形态：一条一条的（技能名称 + 掌握程度）和整块文本框的（专业技能）。
+  // 两种都要能填：前者走 name / level，后者走 summary（把多条技能合成一行）
+  {
+    id: 'skills.name', group: 'skills', key: 'name', types: ['text', 'select', 'combobox'],
+    hi: ['技能名称', '专业技能', '技能特长', '掌握技能', '技能类别', 'skilltags'], lo: ['技能'],
+    not: ['描述', '水平', '等级', '程度']
+  },
+  {
+    id: 'skills.level', group: 'skills', key: 'level', types: ['text', 'select', 'combobox'],
+    hi: ['掌握程度', '熟练程度', '技能水平'], lo: ['程度'],
+    not: ['获奖', '奖项', '荣誉', '语言']
+  },
+  {
+    id: 'skills.years', group: 'skills', key: 'years', types: ['text', 'number', 'select'],
+    hi: ['使用时间总计', '使用年限', '使用时间', '技能年限'], lo: []
+  },
+  {
+    id: 'skills.description', group: 'skills', key: 'description', types: ['textarea', 'text'],
+    hi: ['技能描述', '技能说明'], lo: []
+  },
+  {
+    id: 'skills.summary', group: 'skills', key: 'summary', types: ['textarea'],
+    hi: ['专业技能', '技能特长', '技能证书', '计算机水平', '技能与特长', '技能标签'],
+    lo: ['技能']
+  },
+
+  // ── 获奖情况 ──────────────────────────────
+  {
+    id: 'honors.name', group: 'honors', key: 'name', types: ['text', 'select', 'combobox'],
+    hi: ['获奖项', '奖项名称', '奖励名称', '荣誉名称', '获奖名称'], lo: ['奖项', '荣誉', '获奖', '奖励'],
+    not: ['时间', '日期', '级别', '等级', '描述', '编号', '代码']
+  },
+  {
+    id: 'honors.date', group: 'honors', key: 'date', types: ['date', 'month', 'text', 'select'],
+    hi: ['获奖时间', '获奖年月', '获奖日期', '奖项时间'], lo: []
+  },
+  {
+    id: 'honors.level', group: 'honors', key: 'level', types: ['select', 'text', 'combobox'],
+    hi: ['获奖级别', '奖项级别', '获奖等级', '奖项等级'], lo: ['级别', '等级'],
+    not: ['时间', '日期']
+  },
+  {
+    id: 'honors.description', group: 'honors', key: 'description', types: ['textarea', 'text'],
+    hi: ['获奖描述', '奖项描述', '获奖原因', '获奖说明'], lo: []
+  },
+  {
+    id: 'honors.summary', group: 'honors', key: 'summary', types: ['textarea'],
+    hi: ['荣誉奖项', '获奖情况', '获奖经历', '荣誉证书', '奖励情况', '荣誉奖项及证书'],
+    lo: ['荣誉', '奖项', '获奖', '奖励', '奖学金'],
+    not: ['编号', '代码']
+  },
+
+  // ── 语言能力 ──────────────────────────────
+  {
+    id: 'languages.type', group: 'languages', key: 'type', types: ['text', 'select', 'combobox'],
+    hi: ['语言类型', '语种', '语言种类'], lo: ['语言']
+  },
+  {
+    id: 'languages.level', group: 'languages', key: 'level', types: ['text', 'select', 'combobox'],
+    hi: ['掌握程度', '熟练程度', '语言等级'], lo: ['水平', '等级'],
+    not: ['获奖', '奖项']
+  },
+  {
+    id: 'languages.summary', group: 'languages', key: 'summary', types: ['textarea'],
+    hi: ['外语水平', '语言能力', '语言水平', '语言等级', '外语能力'], lo: ['语言', '外语']
+  },
+
+  // ── 证书 ──────────────────────────────────
+  {
+    id: 'certificates.name', group: 'certificates', key: 'name', types: ['text', 'select', 'combobox'],
+    hi: ['证书名称', '证书名', '资格证书名称', '证书全称'], lo: ['证书'],
+    // 「荣誉奖项」「获奖情况」现在有独立分组：网申里它们是两个栏目，
+    // 且荣誉要按含金量分级填，混进证书栏会让用户后续填错位置
+    not: ['荣誉', '奖项', '获奖', '奖学金', '称号', '编号', '代码', '时间', '日期', '描述']
+  },
+  {
+    id: 'certificates.date', group: 'certificates', key: 'date', types: ['date', 'month', 'text', 'select'],
+    hi: ['获得时间', '取证时间', '发证时间', '证书获得时间'], lo: []
+  },
+  {
+    id: 'certificates.description', group: 'certificates', key: 'description', types: ['textarea', 'text'],
+    hi: ['证书描述', '证书说明', '发证机构'], lo: []
+  },
+  {
+    id: 'certificates.summary', group: 'certificates', key: 'summary', types: ['textarea'],
+    hi: ['证书情况', '资格证书', '证书信息', '证书及荣誉', '获得证书'],
+    lo: ['证书'],
+    not: ['编号', '代码']
   }
 ];
+
+// id → 规则。createFillPlan 需要回看规则上的 optional 标记
+const FILL_RULE_INDEX = (() => {
+  const index = {};
+  for (const rule of FILL_RULES) index[rule.id] = rule;
+  return index;
+})();
 
 // ── 字段显示名（无匹配标签时兜底，也用于提示文案）──
 
 const FILL_LABELS = {
   'basic.name': '姓名', 'basic.gender': '性别', 'basic.birthDate': '出生日期', 'basic.phone': '手机号',
   'basic.email': '邮箱', 'basic.currentCity': '现居城市', 'basic.hometown': '籍贯',
-  'basic.nativePlace': '生源地', 'basic.politicalStatus': '政治面貌', 'basic.idCard': '身份证号',
+  'basic.nativePlace': '生源地', 'basic.politicalStatus': '政治面貌', 'basic.ethnicity': '民族',
+  'basic.idCard': '身份证号',
   'basic.bankAccount': '银行卡号', 'basic.homeAddress': '家庭住址', 'basic.emergencyContact': '紧急联系人',
+  'basic.degree': '最高学历', 'basic.degreeLevel': '最高学位',
   'intent.targetPosition': '期望岗位', 'intent.targetCity': '期望城市', 'intent.targetSalary': '期望薪资',
   'intent.availableDate': '到岗时间', 'intent.jobType': '求职类型',
   'education.school': '学校', 'education.college': '学院', 'education.major': '专业',
   'education.degree': '学历', 'education.studyMode': '培养方式', 'education.gpa': 'GPA',
   'education.rank': '专业排名', 'education.courses': '主修课程',
   'education.startDate': '入学时间', 'education.endDate': '毕业时间', 'education.range': '就读起止时间',
+  'education.ongoing': '至今',
   'experience.company': '公司', 'experience.department': '部门', 'experience.title': '职位',
   'experience.industry': '所属行业', 'experience.description': '工作内容',
   'experience.achievement': '业绩成果', 'experience.startDate': '开始时间', 'experience.endDate': '结束时间',
-  'experience.range': '任职起止时间',
+  'experience.range': '任职起止时间', 'experience.ongoing': '至今',
   'projects.name': '项目名', 'projects.role': '担任角色', 'projects.description': '项目描述',
   'projects.techStack': '技术栈', 'projects.achievement': '项目成果', 'projects.startDate': '开始时间',
-  'projects.endDate': '结束时间', 'projects.range': '项目起止时间',
-  'skills.skillTags': '技能标签', 'skills.languages': '语言等级', 'skills.certificates': '证书',
-  'skills.honors': '荣誉奖项', 'skills.selfEvaluation': '自我评价', 'skills.portfolio': '作品 / 主页链接'
+  'projects.endDate': '结束时间', 'projects.range': '项目起止时间', 'projects.ongoing': '至今',
+  'campusRole.title': '在校职务', 'campusRole.description': '职务描述', 'campusRole.startDate': '开始时间',
+  'campusRole.endDate': '结束时间', 'campusRole.range': '任职起止时间', 'campusRole.ongoing': '至今',
+  'campusPractice.name': '实践名称', 'campusPractice.description': '实践描述', 'campusPractice.startDate': '开始时间',
+  'campusPractice.endDate': '结束时间', 'campusPractice.range': '实践起止时间', 'campusPractice.ongoing': '至今',
+  'extra.hobby': '兴趣爱好', 'extra.strength': '特长', 'extra.selfEvaluation': '自我评价',
+  'extra.portfolio': '作品 / 主页链接',
+  'skills.name': '技能名称', 'skills.level': '掌握程度', 'skills.years': '使用时间总计',
+  'skills.description': '技能描述', 'skills.summary': '技能',
+  'honors.name': '获奖项', 'honors.date': '获奖时间', 'honors.level': '获奖级别',
+  'honors.description': '获奖描述', 'honors.summary': '荣誉奖项',
+  'languages.type': '语言类型', 'languages.level': '掌握程度', 'languages.summary': '语言能力',
+  'certificates.name': '证书名称', 'certificates.date': '获得时间', 'certificates.description': '证书描述',
+  'certificates.summary': '证书'
 };
 
 // ── 跳过原因文案（面向用户，说明「为什么没填」）──
@@ -442,6 +646,10 @@ const FILL_REASONS = {
   'too-long': { title: '超出长度限制', detail: '简历内容比字段允许的长度更长，请手动精简。' },
   region: { title: '国家/地区选择框', detail: '这是国家或地区选择框（如「中国大陆」），不属于简历内容，请按需手动选择。' },
   unsupported: { title: '不支持的控件', detail: '该控件类型无法自动填写。' },
+  'not-ongoing': {
+    title: '该经历不是进行中',
+    detail: '这段经历的结束时间已经写完，所以没有勾选「至今」。这是正常的，不用处理。'
+  },
   stale: { title: '页面已变化', detail: '扫描后页面结构发生变化，该字段已失效，请重新扫描。' }
 };
 
@@ -740,12 +948,43 @@ function blockFillField(features) {
 
 // ── 取值 ──────────────────────────────────────
 
+// 列表型分组里「不在 schema 上、由多条合成」的伪字段。
+// range 早就存在（起止时间），summary 是这次新增的：
+// 表单里技能/获奖/证书/语言常常只有一个大文本框（「专业技能」「荣誉奖项」），
+// 而字段表里它们是一条一条的，需要合成一行才填得进去
+const FILL_SUMMARY_GROUPS = {
+  skills: 'name',
+  certificates: 'name',
+  honors: 'name'
+};
+
+function summarizeFillItems(group, items) {
+  const list = Array.isArray(items) ? items : [];
+  if (group === 'languages') {
+    // 语言要把类型和等级拼起来：「英语 CET-6、粤语」
+    return list
+      .map(item => {
+        const type = normalizeFillText(item.type);
+        const level = normalizeFillText(item.level);
+        if (!type) return level;
+        return level ? `${type} ${level}` : type;
+      })
+      .filter(Boolean)
+      .join('、');
+  }
+  const key = FILL_SUMMARY_GROUPS[group];
+  if (!key) return '';
+  return list.map(item => normalizeFillText(item[key])).filter(Boolean).join('、');
+}
+
 // 按语义从 profile 取原始值。列表型分组用 itemIndex 取第几段经历。
 function resolveFillValue(profile, group, key, itemIndex) {
   const container = profile && profile[group];
   if (!container) return '';
 
   if (Array.isArray(container)) {
+    // summary 看的是整个列表，与 itemIndex 无关
+    if (key === 'summary') return summarizeFillItems(group, container);
     const item = container[itemIndex];
     if (!item) return '';
     if (key === 'range') {
@@ -753,6 +992,12 @@ function resolveFillValue(profile, group, key, itemIndex) {
       const end = normalizeFillText(item.endDate);
       if (start && end) return `${start} - ${end}`;
       return start || end || '';
+    }
+    // 「至今」是个复选框：只有结束时间真的写着「至今」才勾。返回值就用「至今」本身，
+    // 好让下面的复选框适配逻辑拿它跟本选项的文字比对；对不上就交用户手填，
+    // 而不是自作主张勾上一个文字不同的框
+    if (key === 'ongoing') {
+      return normalizeFillText(item.endDate) === '至今' ? '至今' : '';
     }
     return normalizeFillText(item[key]);
   }
@@ -911,6 +1156,42 @@ function adaptFillValue(rawValue, features, semantic) {
 // 按字段记账后：同一字段第二次出现才推进，其余字段各自从第 0 条取值，
 // 第二个「单位名称」也仍然能正确推进到第二条经历。
 
+// 「最高那一档」的取值：个人信息区块里的学历 / 学位 / 专业 / 学校问的不是
+// 「第一条经历」，而是「最高学历那一条」。用户的教育经历常常是本科在前、
+// 硕士在后，按第 0 条取会把硕士填成本科 —— 那是事实性错误，比不填更糟。
+//
+// 判定靠所在章节，不靠关键词：同一个「专业名称」在教育经历区块里是这一条的
+// 专业，在个人信息区块里是最高学历的专业。章节认不出来时保持原行为（第 0 条），
+// 不做猜测 —— 章节识别不出来时，按条目推进本来就是更保守的默认。
+const FILL_HIGHEST_EDUCATION_KEYS = { degree: true, major: true, school: true, college: true };
+const FILL_DEGREE_RANK = { '博士': 5, '硕士': 4, '本科': 3, '大专': 2, '高中': 1 };
+
+function isHighestEducationField(hit, sectionGroup) {
+  return Boolean(hit) && sectionGroup === 'basic'
+    && hit.group === 'education'
+    && FILL_HIGHEST_EDUCATION_KEYS[hit.key] === true;
+}
+
+// 学历高者优先；同学历时结束时间晚的更近（在读的硕士胜过已毕业的本科）。
+// 一条都认不出学历时退化为「结束时间最晚的那一条」。
+function fillHighestEducationIndex(education) {
+  const items = Array.isArray(education) ? education : [];
+  let best = 0;
+  let bestRank = -1;
+  let bestEnd = '';
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i] || {};
+    const rank = FILL_DEGREE_RANK[normalizeFillText(item.degree).trim()] || 0;
+    const end = normalizeFillText(item.endDate);
+    if (rank > bestRank || (rank === bestRank && end > bestEnd)) {
+      best = i;
+      bestRank = rank;
+      bestEnd = end;
+    }
+  }
+  return best;
+}
+
 function createGroupCursor() {
   return {};
 }
@@ -1002,10 +1283,20 @@ function createFillPlan(fields, profile, options) {
     if (sensitiveKeys.indexOf(hit.key) >= 0 && !includeSensitive) { pushManual(field, 'sensitive'); continue; }
 
     // 5) 定位第几条经历
-    const itemIndex = nextItemIndex(cursor, hit.group, field.sectionSeq, hit.key);
+    // 个人信息区块里的「学历 / 专业名称 / 毕业学校」问的是最高学历那一档，
+    // 不是第一条经历 —— 本科在前、硕士在后的简历按第 0 条取会填成本科。
+    const highestPick = isHighestEducationField(hit, hit.sectionGroup);
+    const itemIndex = highestPick
+      ? fillHighestEducationIndex(profile && profile.education)
+      : nextItemIndex(cursor, hit.group, field.sectionSeq, hit.key);
     const raw = resolveFillValue(profile, hit.group, hit.key, itemIndex);
     if (!raw) {
-      pushManual(field, field.sectionSeq != null && itemIndex > 0 ? 'no-item' : 'no-value');
+      // 「至今」这类可选勾选：没勾不等于缺数据，用专门的文案说明，别让用户以为漏了
+      const rule = FILL_RULE_INDEX[hit.id];
+      if (rule && rule.optional) { pushManual(field, 'not-ongoing'); continue; }
+      // 「最高那一档」取不到值不等于经历条数不足，别给误导性的原因
+      const shortOfItems = !highestPick && field.sectionSeq != null && itemIndex > 0;
+      pushManual(field, shortOfItems ? 'no-item' : 'no-value');
       continue;
     }
 
@@ -1027,6 +1318,8 @@ function createFillPlan(fields, profile, options) {
     if (assisted) notes.push('已填入关键词触发页面筛选，请从下拉候选里点选才算选中');
     // 靠相邻字段推出来的分组不是铁证，让用户核对一眼
     if (hit.viaNeighbor) notes.push('按上文相邻字段判断所属区块，请核对');
+    // 从「最高那一档」里取的值要让用户知道取的是哪一条
+    if (highestPick && itemIndex > 0) notes.push('取自学历最高的一段教育经历，请核对');
     if (adapted.note) notes.push(adapted.note);
 
     items.push({

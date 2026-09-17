@@ -56,12 +56,16 @@ function F(overrides) {
 // ── 样例简历 ──────────────────────────────────
 
 const PROFILE = {
-  version: 1,
+  version: 2,
   basic: {
     name: '张三', gender: '男', birthDate: '2002.05', phone: '13800000000',
     email: 'zhangsan@example.com', currentCity: '深圳', hometown: '广东汕头',
     politicalStatus: '共青团员', idCard: '440000200205010000', bankAccount: '', homeAddress: '',
-    emergencyContact: ''
+    emergencyContact: '',
+    // 这四项是 profile.js 的 applyProfileDerived 从教育经历里带出来的派生值，
+    // popup.js 传给 createFillPlan 的就是派生后的副本。测试夹具必须照抄这一形状，
+    // 否则测的是「个人信息留空」这个生产环境不会出现的状态。
+    degree: '本科', degreeLevel: '学士', major: '新闻学', school: '广东海洋大学'
   },
   intent: {
     targetPosition: '产品运营', targetCity: '深圳 / 广州', targetSalary: '面议',
@@ -86,8 +90,28 @@ const PROFILE = {
       description: '面向本校学生的闲置交易小程序', techStack: 'Figma、Axure', achievement: '上线两周 800 注册'
     }
   ],
-  skills: {
-    languages: '英语 CET-6、粤语', skillTags: 'SQL、Figma、内容运营', certificates: '计算机二级',
+  skills: [
+    { name: 'SQL', level: '熟练', years: '3 年', description: '' },
+    { name: 'Figma', level: '掌握', years: '', description: '' }
+  ],
+  honors: [
+    { name: '国家励志奖学金', date: '2024.10', level: '国家级', description: '' }
+  ],
+  languages: [
+    { type: '英语', level: 'CET-6' },
+    { type: '粤语', level: '' }
+  ],
+  certificates: [
+    { name: '计算机二级', date: '2023.06', description: '' }
+  ],
+  campusRole: [
+    { title: '学生会宣传部部长', startDate: '2024.09', endDate: '2025.06', description: '负责公众号运营，粉丝增长 2000+' }
+  ],
+  campusPractice: [
+    { name: '暑期三下乡社会实践', startDate: '2024.07', endDate: '2024.08', description: '走访 12 个村落完成调研报告' }
+  ],
+  extra: {
+    hobby: '摄影、长跑', strength: '视频剪辑',
     selfEvaluation: '对数据和内容都敏感，喜欢把模糊问题拆成可验证的假设。',
     portfolio: 'github.com/example'
   }
@@ -114,6 +138,24 @@ check('识别求职意向', api.resolveSectionGroup(['求职意向']) === 'inten
 check('由近及远取第一个能识别的', api.resolveSectionGroup(['姓名', '教育经历']) === 'education');
 check('都认不出返回 null', api.resolveSectionGroup(['其他说明', '备注']) === null);
 check('长文本不误判（含「技能」的段落）', api.resolveSectionGroup(['技能']) === 'skills');
+// 实践类必须归在校实践，不能留在项目经历 —— 北森等系统里它们是两个栏目
+check('识别「实践经历」→ 在校实践', api.resolveSectionGroup(['实践经历']) === 'campusPractice',
+  api.resolveSectionGroup(['实践经历']));
+check('识别「社会实践」→ 在校实践', api.resolveSectionGroup(['社会实践']) === 'campusPractice');
+check('识别「学生工作」→ 在校职务', api.resolveSectionGroup(['学生工作']) === 'campusRole',
+  api.resolveSectionGroup(['学生工作']));
+check('识别「社团经历」→ 在校职务', api.resolveSectionGroup(['社团经历']) === 'campusRole');
+check('识别「附加信息」→ 附加信息', api.resolveSectionGroup(['附加信息']) === 'extra');
+check('识别「其他信息」→ 附加信息', api.resolveSectionGroup(['其他信息']) === 'extra',
+  api.resolveSectionGroup(['其他信息']));
+check('识别「获奖情况」→ 获奖情况', api.resolveSectionGroup(['获奖情况']) === 'honors');
+check('识别「语言能力」→ 语言能力', api.resolveSectionGroup(['语言能力']) === 'languages');
+check('识别「证书」→ 证书', api.resolveSectionGroup(['证书']) === 'certificates');
+// 「技能证书」这种混排标题取最长匹配，归技能这一桶而不是证书
+check('「技能证书」归技能（最长匹配）', api.resolveSectionGroup(['技能证书']) === 'skills',
+  api.resolveSectionGroup(['技能证书']));
+check('「资格证书」归证书', api.resolveSectionGroup(['资格证书']) === 'certificates');
+check('「实习经历」不会被实践类抢走', api.resolveSectionGroup(['实习经历']) === 'experience');
 
 // ══════════════════════════════════════════════
 section('3. 正向：必须认出的字段');
@@ -144,17 +186,44 @@ expectHit('所学专业', F({ label: '所学专业' }), 'education.major');
 expectHit('学历', F({ label: '学历', type: 'select' }), 'education.degree');
 expectHit('入学时间', F({ label: '入学时间', type: 'date' }), 'education.startDate');
 expectHit('毕业时间', F({ label: '毕业时间', type: 'date' }), 'education.endDate');
-expectHit('任职起止时间', F({ label: '任职起止时间' }), 'experience.range');
+// 「任职起止时间」把分组写进字段名，教育/实习/项目/在校职务四组里都可能出现
+expectHit('任职起止时间 @工作经历', F({ label: '任职起止时间', sectionTexts: ['工作经历'] }), 'experience.range');
 expectHit('公司名称', F({ label: '公司名称' }), 'experience.company');
 expectHit('职位名称', F({ label: '职位名称' }), 'experience.title');
+expectHit('实习内容（textarea）', F({ label: '实习内容', type: 'textarea' }), 'experience.description');
 expectHit('工作内容（textarea）', F({ label: '工作内容', type: 'textarea' }), 'experience.description');
 expectHit('项目名称', F({ label: '项目名称' }), 'projects.name');
 expectHit('项目角色', F({ label: '项目角色' }), 'projects.role');
 expectHit('技术栈', F({ label: '技术栈' }), 'projects.techStack');
-expectHit('专业技能', F({ label: '专业技能', type: 'textarea' }), 'skills.skillTags');
-expectHit('外语水平', F({ label: '外语水平' }), 'skills.languages');
-expectHit('自我评价（textarea）', F({ label: '自我评价', type: 'textarea' }), 'skills.selfEvaluation');
-expectHit('作品链接', F({ label: '作品集链接' }), 'skills.portfolio');
+// 技能：一条一条的走 name/level，整块文本框的走 summary
+expectHit('技能名称', F({ label: '技能名称' }), 'skills.name');
+expectHit('掌握程度 @技能', F({ label: '掌握程度', sectionTexts: ['技能'] }), 'skills.level');
+expectHit('使用时间总计', F({ label: '使用时间总计' }), 'skills.years');
+expectHit('专业技能（textarea → 整块技能）', F({ label: '专业技能', type: 'textarea' }), 'skills.summary');
+// 获奖：四个字段各自独立，不要混成一个
+expectHit('获奖项', F({ label: '获奖项' }), 'honors.name');
+expectHit('获奖时间', F({ label: '获奖时间', type: 'month' }), 'honors.date');
+expectHit('获奖级别', F({ label: '获奖级别', type: 'select' }), 'honors.level');
+expectHit('获奖描述', F({ label: '获奖描述', type: 'textarea' }), 'honors.description');
+expectHit('荣誉奖项（textarea → 整块）', F({ label: '荣誉奖项', type: 'textarea' }), 'honors.summary');
+// 语言与证书
+expectHit('语言类型', F({ label: '语言类型', type: 'select' }), 'languages.type');
+expectHit('掌握程度 @语言能力', F({ label: '掌握程度', sectionTexts: ['语言能力'] }), 'languages.level');
+expectHit('外语水平（textarea → 整块）', F({ label: '外语水平', type: 'textarea' }), 'languages.summary');
+expectHit('证书名称', F({ label: '证书名称' }), 'certificates.name');
+expectHit('获得时间 @证书', F({ label: '获得时间', sectionTexts: ['证书'] }), 'certificates.date');
+expectHit('证书描述', F({ label: '证书描述', type: 'textarea' }), 'certificates.description');
+expectHit('资格证书（textarea → 整块）', F({ label: '资格证书', type: 'textarea' }), 'certificates.summary');
+// 在校职务与在校实践
+expectHit('职务名称 @在校职务', F({ label: '职务名称', sectionTexts: ['在校职务'] }), 'campusRole.title');
+expectHit('职务描述 @在校职务', F({ label: '职务描述', sectionTexts: ['在校职务'] }), 'campusRole.description');
+expectHit('实践名称 @在校实践', F({ label: '实践名称', sectionTexts: ['在校实践'] }), 'campusPractice.name');
+expectHit('实践描述 @在校实践', F({ label: '实践描述', type: 'textarea', sectionTexts: ['在校实践'] }), 'campusPractice.description');
+// 附加信息
+expectHit('兴趣爱好', F({ label: '兴趣爱好', type: 'textarea' }), 'extra.hobby');
+expectHit('特长', F({ label: '特长' }), 'extra.strength');
+expectHit('自我评价（textarea）', F({ label: '自我评价', type: 'textarea' }), 'extra.selfEvaluation');
+expectHit('作品链接', F({ label: '作品集链接' }), 'extra.portfolio');
 
 // 章节消歧：同一个「起始时间」在两个章节里必须落到不同分组
 expectHit('起始时间 @教育经历', F({ label: '起始时间', type: 'month', sectionTexts: ['教育经历'] }), 'education.startDate');
@@ -177,9 +246,12 @@ expectMiss('学校性质（含「学校」但不是校名）', F({ label: '学�
 expectMiss('出生地（不是出生日期）', F({ label: '出生地' }));
 expectMiss('公司行业', F({ label: '公司行业', type: 'select' }));
 expectMiss('公司简介', F({ label: '公司简介', type: 'textarea' }));
-expectMiss('兴趣爱好', F({ label: '兴趣爱好', type: 'textarea' }));
 expectMiss('职业规划', F({ label: '职业规划', type: 'textarea' }));
 expectMiss('入职部门', F({ label: '入职部门' }));
+// 新增的六组不能靠泛词把相邻栏目抢过来
+expectMiss('实践成果不是实践名称', F({ label: '实践成果', sectionTexts: ['在校实践'] }));
+expectMiss('获奖编号不是获奖项', F({ label: '获奖编号', sectionTexts: ['获奖情况'] }));
+expectMiss('证书编号不是证书名', F({ label: '证书编号', sectionTexts: ['证书'] }));
 
 // 无章节信息时「起始时间」两义，必须判为不明确而不是硬选一个
 const ambiguousHit = api.classifyFillField(F({ label: '起始时间', type: 'month' }), {});
@@ -266,11 +338,11 @@ check('select 匹配到选项值', api.adaptFillValue('本科', sel, 'education.
 check('select 无匹配时拒绝', api.adaptFillValue('博士后', F({ type: 'select', options: [{ value: 'a', text: '本科' }] }), 'education.degree').reason === 'no-option');
 
 check('单行控件把换行压成分号',
-  api.adaptFillValue('第一行\n第二行', F({ type: 'text' }), 'skills.selfEvaluation').value === '第一行；第二行');
+  api.adaptFillValue('第一行\n第二行', F({ type: 'text' }), 'extra.selfEvaluation').value === '第一行；第二行');
 check('textarea 保留换行',
-  api.adaptFillValue('第一行\n第二行', F({ type: 'textarea' }), 'skills.selfEvaluation').value.includes('\n'));
+  api.adaptFillValue('第一行\n第二行', F({ type: 'textarea' }), 'extra.selfEvaluation').value.includes('\n'));
 check('长文本超长时截断并告知',
-  (() => { const r = api.adaptFillValue('x'.repeat(50), F({ type: 'textarea', maxLength: 20 }), 'skills.selfEvaluation'); return r.ok && r.value.length === 20 && /截断/.test(r.note); })());
+  (() => { const r = api.adaptFillValue('x'.repeat(50), F({ type: 'textarea', maxLength: 20 }), 'extra.selfEvaluation'); return r.ok && r.value.length === 20 && /截断/.test(r.note); })());
 check('手机号超长直接拒绝（截断等于填错）',
   api.adaptFillValue('13800000000', F({ type: 'text', maxLength: 8 }), 'basic.phone').reason === 'too-long');
 check('空值不填', api.adaptFillValue('', F({}), 'basic.name').reason === 'no-value');
@@ -337,21 +409,30 @@ section('10. 经历条数推进');
     const PROFILE1 = {
       education: [{ school: '广东海洋大学', degree: '本科', major: '电子信息工程', gpa: '3.7', startDate: '2023.09', endDate: '2027.06' }]
     };
+    // 「最高学历 / 最高学位」是个人信息栏独有的两个字段：值取自 basic 里的派生值
+    // （profile.js 的 applyProfileDerived 从学历最高的一条教育经历带出），
+    // 不走教育经历的条目游标。学校 / 专业没有独立语义，仍取 education，但按「最高那一档」。
+    const PROFILE1_DERIVED = Object.assign({}, PROFILE1, {
+      basic: { degree: '本科', degreeLevel: '学士' }
+    });
     const planEdu = api.createFillPlan([
-      F('e1', '最高学历'), F('e2', '最高学位'), F('e3', '专业名称'),
-      F('e4', '毕业学校'), F('e5', '学校名称'), F('e6', '成绩(GPA)')
-    ], PROFILE1, {});
+      F('e1', '最高学历'), F('e2', '最高学位'),
+      F('e3', '专业名称', 'text', 0), F('e4', '毕业学校', 'text', 0),
+      F('e5', '学校名称', 'text', 0), F('e6', '成绩(GPA)', 'text', 0)
+    ], PROFILE1_DERIVED, {});
     const got = {};
     for (const item of planEdu.items) got[item.formLabel] = item.value;
     check('最高学历取到本科', got['最高学历'] === '本科', got);
+    check('最高学位取到学士（原先认不出，已修）', got['最高学位'] === '学士', got);
     check('专业名称取到专业', got['专业名称'] === '电子信息工程', got);
     check('毕业学校取到学校', got['毕业学校'] === '广东海洋大学', got);
     check('GPA 取到成绩', got['成绩(GPA)'] === '3.7', got);
+    // 只剩同义字段重复那一条：第二个「学校名称」把 education.school 的条目游标推到了
+    // 第二条，而简历里只有一段教育经历 —— 如实报「经历条数不足」，不编造值
     const eduManual = planEdu.manual.filter(m => m.reason === 'no-item' || m.reason === 'no-value');
-    check('取不到值的只有同义字段（最高学位 / 学校名称）',
-      eduManual.length === 2
-        && eduManual.every(m => m.formLabel === '最高学位' || m.formLabel === '学校名称'),
-      eduManual.map(m => m.formLabel));
+    check('取不到值的只剩同义字段（第二个学校名称）',
+      eduManual.length === 1 && eduManual[0].formLabel === '学校名称' && eduManual[0].reason === 'no-item',
+      eduManual.map(m => m.formLabel + '/' + m.reason));
   }
 
   const c3 = api.createGroupCursor();
@@ -437,7 +518,8 @@ check('身份证默认不填', !byRef.f5 && manualByRef.f5?.reason === 'sensitiv
 check('紧急联系人默认不填', !byRef.f6 && manualByRef.f6?.reason === 'sensitive');
 check('文件上传跳过', !byRef.f7 && manualByRef.f7?.reason === 'file');
 check('验证码跳过', !byRef.f8 && manualByRef.f8?.reason === 'captcha');
-check('兴趣爱好未识别', !byRef.f9 && manualByRef.f9?.reason === 'unknown');
+check('兴趣爱好被填（附加信息已独立成组）', byRef.f9?.semantic === 'extra.hobby' && Boolean(byRef.f9.value),
+  byRef.f9 && { semantic: byRef.f9.semantic, value: byRef.f9.value });
 check('已有内容不覆盖', !byRef.f40 && manualByRef.f40?.reason === 'has-value');
 check('已有内容（评价）不覆盖', !byRef.f41 && manualByRef.f41?.reason === 'has-value');
 
@@ -468,9 +550,11 @@ const selectPlan = api.createFillPlan([
 check('下拉写入 option 的 value', selectPlan.items[0]?.value === '1', selectPlan.items[0]?.value);
 check('下拉展示 option 的文字而非 value', selectPlan.items[0]?.displayValue === '男', selectPlan.items[0]?.displayValue);
 
-// 近似匹配命中的选项也要展示实际选中的那个文字
+// 近似匹配命中的选项也要展示实际选中的那个文字。
+// 用「学历」而不是「最高学历」：后者已经归 basic.degree（个人信息栏的"最高那一档"），
+// 这里要测的是教育经历条目里的学历与选项的近似匹配，别把两件事混在一起。
 const partialPlan = api.createFillPlan([
-  F({ ref: 'sel2', label: '最高学历', type: 'select', sectionTexts: ['教育经历'],
+  F({ ref: 'sel2', label: '学历', type: 'select', sectionTexts: ['教育经历'],
     options: [{ value: 'x', text: '本科（全日制）' }, { value: 'y', text: '硕士研究生' }] })
 ], PROFILE, {});
 check('近似匹配写入对应 value', partialPlan.items[0]?.value === 'x', partialPlan.items[0]?.value);
@@ -579,13 +663,13 @@ check('所属行业能被认出', missOf('所属行业', { sectionTexts: ['工�
 check('行业规模不是行业名', missOf('行业规模', { sectionTexts: ['工作经历'] }) === null);
 check('学校排名不是专业排名', missOf('学校排名', { sectionTexts: ['教育经历'] }) === null);
 
-check('荣誉奖项能被认出', missOf('荣誉奖项', { type: 'textarea', sectionTexts: ['荣誉奖项'] })?.id === 'skills.honors',
+check('荣誉奖项能被认出', missOf('荣誉奖项', { type: 'textarea', sectionTexts: ['荣誉奖项'] })?.id === 'honors.summary',
   missOf('荣誉奖项', { type: 'textarea', sectionTexts: ['荣誉奖项'] })?.id);
-check('获奖情况能被认出', missOf('获奖情况', { type: 'textarea' })?.id === 'skills.honors');
-check('奖学金能被认出', missOf('奖学金', { type: 'textarea', sectionTexts: ['荣誉奖项'] })?.id === 'skills.honors');
+check('获奖情况能被认出', missOf('获奖情况', { type: 'textarea' })?.id === 'honors.summary');
+check('奖学金能被认出', missOf('奖学金', { type: 'textarea', sectionTexts: ['荣誉奖项'] })?.id === 'honors.summary');
 // 荣誉已独立成字段：证书框不能把获奖情况抢走
-check('证书不吞获奖情况', missOf('获奖情况', { type: 'textarea' })?.id !== 'skills.certificates');
-check('资格证书仍归证书字段', missOf('资格证书', { type: 'textarea', sectionTexts: ['技能证书'] })?.id === 'skills.certificates',
+check('证书不吞获奖情况', missOf('获奖情况', { type: 'textarea' })?.id !== 'certificates.name');
+check('资格证书仍归证书字段', missOf('资格证书', { type: 'textarea', sectionTexts: ['技能证书'] })?.id === 'certificates.summary',
   missOf('资格证书', { type: 'textarea', sectionTexts: ['技能证书'] })?.id);
 check('证书编号不是证书名', missOf('证书编号', { sectionTexts: ['技能证书'] }) === null,
   missOf('证书编号', { sectionTexts: ['技能证书'] })?.id);
@@ -605,13 +689,19 @@ check('department 无章节时不硬猜（判为不明确）', deptNoSection && 
 
 // 新字段也要能进预填清单（否则 profile 里填了却填不到页面）
 const PLAN_PROFILE = {
-  version: 1,
+  version: 2,
   basic: { name: '张三', nativePlace: '广东汕头' },
   intent: {},
   education: [{ school: '广东海洋大学', rank: '专业前20%', courses: '数字电子技术、Python 程序设计', gpa: '3.7' }],
   experience: [{ company: '某科技公司', title: '产品实习生', department: '产品部', industry: '计算机软件' }],
   projects: [],
-  skills: { honors: '国家励志奖学金' }
+  campusRole: [],
+  campusPractice: [],
+  skills: [{ name: 'SQL' }],
+  honors: [{ name: '国家励志奖学金', level: '国家级' }],
+  languages: [{ type: '英语', level: 'CET-6' }],
+  certificates: [{ name: '计算机二级' }],
+  extra: {}
 };
 const newFieldPlan = api.createFillPlan([
   F({ ref: 'n1', label: '生源地', sectionTexts: ['基础信息'] }),
@@ -619,7 +709,7 @@ const newFieldPlan = api.createFillPlan([
   F({ ref: 'n3', label: '主修课程', type: 'textarea', sectionTexts: ['教育经历'] }),
   F({ ref: 'n4', label: '部门', sectionTexts: ['工作经历'] }),
   F({ ref: 'n5', label: '所属行业', sectionTexts: ['工作经历'] }),
-  F({ ref: 'n6', label: '荣誉奖项', type: 'textarea', sectionTexts: ['荣誉奖项'] })
+  F({ ref: 'n6', label: '荣誉奖项', type: 'textarea', sectionTexts: ['获奖情况'] })
 ], PLAN_PROFILE, {});
 check('新字段全部进入预填清单', newFieldPlan.items.length === 6, newFieldPlan.items.map(i => i.semantic));
 const byRefNew = {};
@@ -688,7 +778,7 @@ const phCases = [
   ['职位名称', '请选择', 'experience.title'],
   ['项目名称', '请选择', 'projects.name'],
   ['项目描述', '请输入', 'projects.description'],
-  ['技能名称', '请选择', 'skills.skillTags']
+  ['技能名称', '请选择', 'skills.name']
 ];
 for (const [label, ph, want] of phCases) {
   const hit = api.classifyFillField(F({ ref: 'r', label, placeholder: ph }), {});
@@ -697,12 +787,12 @@ for (const [label, ph, want] of phCases) {
 
 // 14.2 报告里原先认不出的真实标签
 const newLabels = [
-  ['实践名称', ['实践经历'], 'projects.name'],
-  ['实践描述', ['实践经历'], 'projects.description'],
+  ['实践名称', ['在校实践'], 'campusPractice.name'],
+  ['实践描述', ['在校实践'], 'campusPractice.description'],
   ['职务描述', ['项目经历'], 'projects.description'],
-  ['获奖描述', ['技能证书'], 'skills.honors'],
-  ['获奖项', ['技能证书'], 'skills.honors'],
-  ['证书描述', [], 'skills.certificates']
+  ['获奖描述', ['技能证书'], 'honors.description'],
+  ['获奖项', ['技能证书'], 'honors.name'],
+  ['证书描述', ['证书'], 'certificates.description']
 ];
 for (const [label, sections, want] of newLabels) {
   const hit = api.classifyFillField(F({ ref: 'r', label, placeholder: '请选择', sectionTexts: sections }),
@@ -735,8 +825,10 @@ check('真正的手机号字段不受影响',
   phonePlan.items.length === 1 && phonePlan.items[0].semantic === 'basic.phone',
   phonePlan.items.map(i => i.semantic));
 
-// 14.5 反向用例不能被这次放宽误伤
-for (const label of ['学校性质', '公司规模', '公司行业', '兴趣爱好', '特长', '使用时间总计', '推荐码']) {
+// 14.5 反向用例不能被这次放宽误伤。
+// 「兴趣爱好 / 特长 / 使用时间总计」已经从反向名单挪到正向（附加信息与技能两组
+// 建起来了，它们现在是真字段），留在反向名单里的必须仍然认不出。
+for (const label of ['学校性质', '公司规模', '公司行业', '推荐码', '职业规划', '实践成果']) {
   const hit = api.classifyFillField(F({ ref: 'r', label, placeholder: '请选择' }), {});
   check('「' + label + '」仍然认不出', hit === null, hit && hit.id);
 }
@@ -757,7 +849,8 @@ for (const [label, type, want] of [
   ['学校名称', 'text', 'education.school'],
   ['生源地', 'text', 'basic.nativePlace'],
   ['期望工作城市', 'text', 'intent.targetCity'],
-  ['最高学历', 'select', 'education.degree'],
+  ['最高学历', 'select', 'basic.degree'],
+  ['最高学位', 'select', 'basic.degreeLevel'],
   ['学历', 'select', 'education.degree'],
   ['出生日期', 'text', 'basic.birthDate'],
   ['到岗时间', 'text', 'intent.availableDate']
@@ -766,18 +859,235 @@ for (const [label, type, want] of [
   check('兜底标签「' + label + '」能认出', Boolean(hit) && hit.id === want, hit && hit.id);
 }
 // 没有对应语义的字段必须仍然认不出（兜底不是乱认）
-for (const label of ['民族', '掌握程度', '获奖时间', '语言类型']) {
+// 「掌握程度 / 获奖时间 / 语言类型 / 民族」在本次重构里有了各自的归属，
+// 已挪到正向用例；留在这里的必须真的没有规则
+for (const label of ['学校性质', '公司规模', '推荐码', '实践成果', '直属上级', '离职原因']) {
   const hit = api.classifyFillField(F({ ref: 'r', label, placeholder: '请选择', sectionTexts: [label] }), { sectionTexts: [label] });
   check('无规则字段「' + label + '」仍认不出', hit === null, hit && hit.id);
+}
+// 本次新归属的四个字段：带章节时必须落到位
+for (const [label, section, want] of [
+  ['民族', '个人信息', 'basic.ethnicity'],
+  ['掌握程度', '技能', 'skills.level'],
+  ['获奖时间', '获奖情况', 'honors.date'],
+  ['语言类型', '语言能力', 'languages.type'],
+  ['获奖级别', '获奖情况', 'honors.level'],
+  ['使用时间总计', '技能', 'skills.years']
+]) {
+  const hit = api.classifyFillField(F({ ref: 'r', label, placeholder: '请选择', sectionTexts: [section] }), { sectionTexts: [section] });
+  check('新字段「' + label + '」能认出', Boolean(hit) && hit.id === want, hit && hit.id);
 }
 // 「开始时间」在教育/实习/项目三组都有 → 必须判不明确，不能随便挑一组填
 const startHit = api.classifyFillField(F({ ref: 'r', label: '开始时间', placeholder: '请选择', sectionTexts: ['开始时间'] }), { sectionTexts: ['开始时间'] });
 check('「开始时间」判为不明确而不是乱填', Boolean(startHit) && startHit.ambiguous === true, startHit);
 
 // 14.7 实践经历归组
-check('「实践经历」归到项目组', api.resolveSectionGroup(['实践经历']) === 'projects', api.resolveSectionGroup(['实践经历']));
-check('「社会实践」归到项目组', api.resolveSectionGroup(['社会实践']) === 'projects');
+check('「实践经历」归到在校实践', api.resolveSectionGroup(['实践经历']) === 'campusPractice', api.resolveSectionGroup(['实践经历']));
+check('「社会实践」归到在校实践', api.resolveSectionGroup(['社会实践']) === 'campusPractice');
 check('「实习经历」仍归到工作与实习组', api.resolveSectionGroup(['实习经历']) === 'experience');
+
+// ══════════════════════════════════════════════
+section('15. 章节关键词搬家（src 级回归，改一边忘另一边会在这里炸）');
+// ══════════════════════════════════════════════
+// 新增在校职务 / 在校实践 / 附加信息三组后，旧有的四个词族必须从原来的组里挪走。
+// 这类错误不报错、只是悄悄让两组抢同一个表单栏，所以用源码断言锁死。
+const sectionBlock = src.match(/const FILL_SECTION_KEYWORDS = \{([\s\S]*?)\n\};/);
+const sectionSrc = sectionBlock ? sectionBlock[1] : '';
+const groupKeywordsOf = (groupId) => {
+  const m = sectionSrc.match(new RegExp('\\b' + groupId + ": \\[([\\s\\S]*?)\\]"));
+  return m ? m[1] : '';
+};
+check('实践类关键词已移出项目组', !/实践/.test(groupKeywordsOf('projects')), groupKeywordsOf('projects'));
+check('「其他信息」已移出技能组', !/其他信息/.test(groupKeywordsOf('skills')), groupKeywordsOf('skills'));
+check('获奖类关键词已移出技能组', !/获奖|荣誉|奖项|奖励/.test(groupKeywordsOf('skills')), groupKeywordsOf('skills'));
+check('语言类关键词已移出技能组', !/语言/.test(groupKeywordsOf('skills')), groupKeywordsOf('skills'));
+check('「技能证书」留在技能组', /技能证书/.test(groupKeywordsOf('skills')), groupKeywordsOf('skills'));
+check('实践类关键词落在在校实践组', /实践/.test(groupKeywordsOf('campusPractice')), groupKeywordsOf('campusPractice'));
+check('附加信息组收到「其他信息」', /其他信息/.test(groupKeywordsOf('extra')), groupKeywordsOf('extra'));
+
+// ══════════════════════════════════════════════
+section('16. 「至今」复选框');
+// ══════════════════════════════════════════════
+// 表单里「结束时间」旁边那个「至今」是个独立复选框。字段表里「至今」是 endDate 的
+// 取值，预填时要把它转成「勾上」这个动作，而不是往结束时间框里写「至今」三个字。
+const ONGOING_PROFILE = {
+  version: 2,
+  basic: {}, intent: {}, education: [],
+  experience: [
+    { company: '甲公司', title: '实习生', startDate: '2025.07', endDate: '至今' },
+    { company: '乙公司', title: '实习生', startDate: '2024.07', endDate: '2024.09' }
+  ],
+  projects: [], campusRole: [], campusPractice: [], skills: [], honors: [],
+  languages: [], certificates: [], extra: {}
+};
+const ongoing = (ref, seq) => F({ ref, label: '至今', type: 'checkbox', optionText: '至今', sectionTexts: ['实习经历'], sectionSeq: seq });
+const ongoingPlan = api.createFillPlan([ongoing('g1', 0), ongoing('g2', 1)], ONGOING_PROFILE, {});
+check('进行中的经历勾选「至今」', ongoingPlan.items.length === 1 && ongoingPlan.items[0].ref === 'g1',
+  ongoingPlan.items.map(i => i.ref));
+check('勾选写的是本选项文字（避免写「是」对不上）', ongoingPlan.items[0]?.value === true,
+  ongoingPlan.items[0] && ongoingPlan.items[0].value);
+check('展示值是人能读懂的「至今」', ongoingPlan.items[0]?.displayValue === '至今',
+  ongoingPlan.items[0] && ongoingPlan.items[0].displayValue);
+check('已结束的经历不勾「至今」', !ongoingPlan.items.some(i => i.ref === 'g2'));
+// 没勾不等于缺数据，不能说成「简历中为空」，否则用户以为漏填了
+const notOngoing = ongoingPlan.manual.find(m => m.ref === 'g2');
+check('不勾时说明「不是进行中」而不是「简历中为空」', notOngoing?.reason === 'not-ongoing',
+  notOngoing && notOngoing.reason);
+check('「不是进行中」有面向用户的完整文案',
+  Boolean(api.FILL_REASONS['not-ongoing'] && api.FILL_REASONS['not-ongoing'].title && api.FILL_REASONS['not-ongoing'].detail));
+check('复选框文字对不上时不硬勾', api.createFillPlan(
+  [F({ ref: 'g3', label: '仍在职', type: 'checkbox', optionText: '仍在职', sectionTexts: ['实习经历'] })],
+  ONGOING_PROFILE, {}
+).items.length === 0);
+
+// ══════════════════════════════════════════════
+section('17. 整块文本字段（多条合成一行）');
+// ══════════════════════════════════════════════
+// 字段表里技能 / 获奖 / 证书 / 语言是一条一条的，而表单常常只有一个大文本框。
+// 只填第一条会让用户以为解析不全，所以用 summary 把多条合成一行。
+const summaryPlan = api.createFillPlan([
+  F({ ref: 'm1', label: '专业技能', type: 'textarea' }),
+  F({ ref: 'm2', label: '荣誉奖项', type: 'textarea' }),
+  F({ ref: 'm3', label: '外语水平', type: 'textarea' }),
+  F({ ref: 'm4', label: '资格证书', type: 'textarea' })
+], PROFILE, {});
+const byRefS = {};
+for (const item of summaryPlan.items) byRefS[item.ref] = item;
+check('技能多条合成一行', byRefS.m1?.value === 'SQL、Figma', byRefS.m1 && byRefS.m1.value);
+check('技能走的是 summary 语义', byRefS.m1?.semantic === 'skills.summary', byRefS.m1 && byRefS.m1.semantic);
+check('获奖多条合成一行', byRefS.m2?.value === '国家励志奖学金', byRefS.m2 && byRefS.m2.value);
+check('语言把类型与等级拼起来', byRefS.m3?.value === '英语 CET-6、粤语', byRefS.m3 && byRefS.m3.value);
+check('证书多条合成一行', byRefS.m4?.value === '计算机二级', byRefS.m4 && byRefS.m4.value);
+check('整块字段都有中文语义名', summaryPlan.items.every(i => i.semanticLabel && i.semanticLabel !== i.semantic),
+  summaryPlan.items.map(i => i.semanticLabel));
+// 一条一条的输入框不能被 summary 抢走
+const perItemPlan = api.createFillPlan([
+  F({ ref: 'k1', label: '技能名称' }),
+  F({ ref: 'k2', label: '掌握程度', sectionTexts: ['技能'] })
+], PROFILE, {});
+check('技能名称仍走单条字段', perItemPlan.items[0]?.semantic === 'skills.name' && perItemPlan.items[0]?.value === 'SQL',
+  perItemPlan.items[0] && { semantic: perItemPlan.items[0].semantic, value: perItemPlan.items[0].value });
+check('掌握程度取到对应那条的值', perItemPlan.items[1]?.value === '熟练', perItemPlan.items[1] && perItemPlan.items[1].value);
+
+// ══════════════════════════════════════════════
+section('18. 新增两组的章节消歧与取值');
+// ══════════════════════════════════════════════
+expectHit('开始时间 @在校职务', F({ label: '开始时间', type: 'month', sectionTexts: ['在校职务'] }), 'campusRole.startDate');
+expectHit('开始时间 @在校实践', F({ label: '开始时间', type: 'month', sectionTexts: ['在校实践'] }), 'campusPractice.startDate');
+expectHit('描述 @在校职务', F({ label: '描述', type: 'textarea', sectionTexts: ['在校职务'] }), 'campusRole.description');
+expectHit('描述 @在校实践', F({ label: '描述', type: 'textarea', sectionTexts: ['在校实践'] }), 'campusPractice.description');
+// 项目名不能被实践组抢走
+expectHit('项目名称仍归项目组', F({ label: '项目名称' }), 'projects.name');
+const campusPlan = api.createFillPlan([
+  F({ ref: 'c1', label: '职务名称', sectionTexts: ['在校职务'] }),
+  F({ ref: 'c2', label: '职务描述', type: 'textarea', sectionTexts: ['在校职务'] }),
+  F({ ref: 'c3', label: '实践名称', sectionTexts: ['在校实践'] }),
+  F({ ref: 'c4', label: '实践描述', type: 'textarea', sectionTexts: ['在校实践'] })
+], PROFILE, {});
+const byRefC = {};
+for (const item of campusPlan.items) byRefC[item.ref] = item;
+check('在校职务取值正确', byRefC.c1?.value === '学生会宣传部部长', byRefC.c1 && byRefC.c1.value);
+check('在校职务描述取值正确', byRefC.c2?.value.includes('公众号运营'), byRefC.c2 && byRefC.c2.value);
+check('在校实践取值正确', byRefC.c3?.value === '暑期三下乡社会实践', byRefC.c3 && byRefC.c3.value);
+check('在校实践描述取值正确', byRefC.c4?.value.includes('12 个村落'), byRefC.c4 && byRefC.c4.value);
+check('新增两组都能进预填清单', campusPlan.items.length === 4, campusPlan.items.map(i => i.semantic));
+
+// ══════════════════════════════════════════════
+section('19. 个人信息区块的「最高那一档」');
+// ══════════════════════════════════════════════
+// 个人信息区块里的「最高学历 / 专业名称 / 毕业学校」问的是**最高那一档**，
+// 不是第一条经历。校招简历常见的顺序是本科在前、硕士在后，
+// 按 education[0] 取会把硕士填成本科 —— 那是事实性错误，比不填更糟。
+//
+// 判定靠所在章节，不靠关键词：同一个「专业名称」在教育经历区块里是这一条的专业，
+// 在个人信息区块里是最高学历的专业。两个方向都必须成立，所以这里两侧都断言。
+
+const TWO_EDU = {
+  version: 2,
+  basic: { degree: '硕士', degreeLevel: '硕士', major: '软件工程', school: '某某大学' },
+  education: [
+    { school: '广东海洋大学', degree: '本科', major: '电子信息工程', startDate: '2023.09', endDate: '2027.06' },
+    { school: '某某大学', degree: '硕士', major: '软件工程', startDate: '2027.09', endDate: '2030.06' }
+  ]
+};
+
+// 方向一：个人信息区块 → 必须取最高那一档（第二条）
+const basicPlan = api.createFillPlan([
+  F({ ref: 'g1', label: '最高学历', type: 'select', options: [{ value: '3', text: '硕士' }], sectionTexts: ['个人信息'] }),
+  F({ ref: 'g2', label: '最高学位', type: 'select', options: [{ value: 'b', text: '硕士' }], sectionTexts: ['个人信息'] }),
+  F({ ref: 'g3', label: '专业名称', sectionTexts: ['个人信息'] }),
+  F({ ref: 'g4', label: '毕业学校', sectionTexts: ['个人信息'] })
+], TWO_EDU, {});
+const byRefG = {};
+for (const item of basicPlan.items) byRefG[item.ref] = item;
+check('个人信息·最高学历取硕士（不是第一条的本科）', byRefG.g1?.value === '3', byRefG.g1 && byRefG.g1.value);
+check('个人信息·最高学位取硕士', byRefG.g2?.value === 'b', byRefG.g2 && byRefG.g2.value);
+check('个人信息·专业名称取最高学历那条', byRefG.g3?.value === '软件工程', byRefG.g3 && byRefG.g3.value);
+check('个人信息·毕业学校取最高学历那条', byRefG.g4?.value === '某某大学', byRefG.g4 && byRefG.g4.value);
+check('取最高那一档时给出核对提示',
+  /最高的一段教育经历/.test(byRefG.g3?.note || ''), byRefG.g3 && byRefG.g3.note);
+check('取最高那一档时 itemIndex 指向第二条', byRefG.g3?.itemIndex === 1, byRefG.g3 && byRefG.g3.itemIndex);
+
+// 方向二：教育经历区块 → 必须按条目推进，不能被"最高"污染
+const eduBlockPlan = api.createFillPlan([
+  F({ ref: 'h1', label: '学校名称', sectionTexts: ['教育经历'], sectionSeq: 0 }),
+  F({ ref: 'h2', label: '专业名称', sectionTexts: ['教育经历'], sectionSeq: 0 }),
+  F({ ref: 'h3', label: '学历', type: 'select', options: [{ value: '1', text: '本科' }], sectionTexts: ['教育经历'], sectionSeq: 0 }),
+  F({ ref: 'h4', label: '学校名称', sectionTexts: ['教育经历'], sectionSeq: 1 }),
+  F({ ref: 'h5', label: '专业名称', sectionTexts: ['教育经历'], sectionSeq: 1 }),
+  F({ ref: 'h6', label: '学历', type: 'select', options: [{ value: '2', text: '硕士' }], sectionTexts: ['教育经历'], sectionSeq: 1 })
+], TWO_EDU, {});
+const byRefH = {};
+for (const item of eduBlockPlan.items) byRefH[item.ref] = item;
+check('教育区块第一条·学校', byRefH.h1?.value === '广东海洋大学', byRefH.h1 && byRefH.h1.value);
+check('教育区块第一条·专业', byRefH.h2?.value === '电子信息工程', byRefH.h2 && byRefH.h2.value);
+check('教育区块第一条·学历', byRefH.h3?.value === '1', byRefH.h3 && byRefH.h3.value);
+check('教育区块第二条·学校', byRefH.h4?.value === '某某大学', byRefH.h4 && byRefH.h4.value);
+check('教育区块第二条·专业', byRefH.h5?.value === '软件工程', byRefH.h5 && byRefH.h5.value);
+check('教育区块第二条·学历', byRefH.h6?.value === '2', byRefH.h6 && byRefH.h6.value);
+check('教育区块不出现"取自最高那一段"的提示',
+  eduBlockPlan.items.every(i => !/最高的一段教育经历/.test(i.note || '')),
+  eduBlockPlan.items.map(i => i.note));
+
+// 章节认不出来时保持原行为（取第 0 条），不做猜测
+const noSectionPlan = api.createFillPlan([
+  F({ ref: 'n1', label: '专业名称' })
+], TWO_EDU, {});
+check('章节认不出时退回第一条（不猜）', noSectionPlan.items[0]?.value === '电子信息工程',
+  noSectionPlan.items[0] && noSectionPlan.items[0].value);
+
+// 只有一条教育经历时，"最高那一档"与第 0 条同值，不该冒出核对提示
+const oneEduPlan = api.createFillPlan([
+  F({ ref: 'o1', label: '专业名称', sectionTexts: ['个人信息'] })
+], { version: 2, basic: {}, education: [TWO_EDU.education[1]] }, {});
+check('只有一条经历时不提示"最高那一段"', /最高的一段教育经历/.test(oneEduPlan.items[0]?.note || '') === false,
+  oneEduPlan.items[0] && oneEduPlan.items[0].note);
+
+// ══════════════════════════════════════════════
+section('20. 提示词与语义枚举一致性（form-map.md）');
+// ══════════════════════════════════════════════
+// 这道断言是为一次真实事故加的：FILL_RULES 从 41 条扩到 85 条时，
+// prompts/form-map.md 还停在旧的 24 个语义上，而没有任何测试盯着它 ——
+// 结果 AI 语义映射只能返回旧词，新分组的字段一律救不回来，还没人发现。
+//
+// 三个方向都要查：语义不能漏、不能多、分组不能缺。
+const formMapSrc = fs.readFileSync(path.join(root, 'prompts', 'form-map.md'), 'utf8');
+const declaredIds = new Set();
+for (const m of formMapSrc.matchAll(/`([a-zA-Z]+\.[a-zA-Z]+)`/g)) declaredIds.add(m[1]);
+const ruleIds = new Set(api.FILL_RULES.map(r => r.id));
+
+const notInPrompt = [...ruleIds].filter(id => !declaredIds.has(id));
+check(`提示词枚举覆盖全部 ${ruleIds.size} 个语义`, notInPrompt.length === 0, notInPrompt.join(', '));
+
+const ghostIds = [...declaredIds].filter(id => !ruleIds.has(id));
+check('提示词里没有已废弃的语义（幽灵 id 会被解析层整条丢弃）', ghostIds.length === 0, ghostIds.join(', '));
+
+const allGroups = [...new Set(api.FILL_RULES.map(r => r.group))];
+const groupsMissing = allGroups.filter(g => !formMapSrc.includes('`' + g + '.'));
+check(`提示词覆盖全部 ${allGroups.length} 个分组`, groupsMissing.length === 0, groupsMissing.join(', '));
+
+// 「最高学历 / 最高学位」是最容易被选错的一对：它们属于个人信息，不属于某条经历
+check('提示词明确「最高学历」不选 education.*', /「最高学历」→ `basic\.degree`/.test(formMapSrc));
 
 console.log(`\n──────── 结果：${pass} 通过 / ${fail} 失败 ────────`);
 process.exit(fail ? 1 : 0);

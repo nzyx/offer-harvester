@@ -203,24 +203,27 @@ function check(name, cond, extra) {
 
   const outHtml = getEl('profile-groups').innerHTML;
   check('面板主体显示', getEl('profile-body').hidden === false);
-  check('渲染出 6 个分组', (outHtml.match(/<section class="pf-group">/g) || []).length === 6,
-    (outHtml.match(/<section class="pf-group">/g) || []).length);
+  check('渲染出 12 个分组', (outHtml.match(/<section class="pf-group[^"]*"/g) || []).length === 12,
+    (outHtml.match(/<section class="pf-group[^"]*"/g) || []).length);
   check('注入的引号被转义', outHtml.includes('&quot;') && !outHtml.includes('onmouseover="alert(1)"'));
   check('姓名值正确转义渲染', outHtml.includes('value="张三&quot; onmouseover=&quot;alert(1)"'));
-  check('敏感字段默认不渲染', !outHtml.includes('身份证号'));
+  check('敏感字段默认不渲染', !outHtml.includes('证件号码'));
   check('隐藏敏感字段有提示', outHtml.includes('已隐藏 4 项敏感字段'));
   check('数组分组渲染编号 01', outHtml.includes('pf-item-idx">01'));
-  check('经历分组标题正确', outHtml.includes('教育经历') && outHtml.includes('工作与实习'));
+  check('经历分组标题正确', outHtml.includes('教育经历') && outHtml.includes('实习经历'));
   check('摘要含已填项数', /已填 \d+ 项/.test(getEl('profile-summary').textContent), getEl('profile-summary').textContent);
-  check('摘要含教育/实习段数', /教育 1 段/.test(getEl('profile-summary').textContent) && /实习\/工作 1 段/.test(getEl('profile-summary').textContent));
+  check('摘要含教育/实习段数', /教育 1 段/.test(getEl('profile-summary').textContent) && /实习 1 段/.test(getEl('profile-summary').textContent),
+    getEl('profile-summary').textContent);
   check('完成度进度条已设置宽度', /%$/.test(getEl('profile-meter-bar').style.width), getEl('profile-meter-bar').style.width);
   check('datalist 用于候选值字段', outHtml.includes('<datalist id="pf-opts-education-0-degree">'));
+  check('v1 的 skillTags 在字段表里迁成技能条目', vm.runInContext('profile.skills.length', ctx) === 2,
+    vm.runInContext('profile.skills', ctx));
 
   console.log('\n=== 5. 敏感字段开关 ===');
   getEl('profile-sensitive').checked = true;
   vm.runInContext('renderProfile();', ctx);
   const outHtml2 = getEl('profile-groups').innerHTML;
-  check('开启后渲染身份证字段', outHtml2.includes('身份证号'));
+  check('开启后渲染身份证字段', outHtml2.includes('证件号码（身份证）'));
   check('开启后带敏感标记', outHtml2.includes('<i>敏感</i>'));
   check('开启后无隐藏提示', !outHtml2.includes('已隐藏'));
   getEl('profile-sensitive').checked = false;
@@ -340,6 +343,162 @@ function check(name, cond, extra) {
   vm.runInContext('scrollProfileIntoView();', ctx);
   check('面板已在视野内时不打扰用户', panelEl.scrolledIntoView === false);
   delete panelEl.getBoundingClientRect;
+
+  console.log('\n=== 8c. 字段表：折叠 / 必填标记 / 缺失统计（补充引导） ===');
+
+  vm.runInContext(`
+    profile = normalizeProfile({
+      basic: { name: '张三', phone: '13800000000', email: 'z@a.com' },
+      education: [{ school: '广东海洋大学', major: '新闻学', degree: '本科' }],
+      skills: [{ name: 'SQL', level: '熟练' }]
+    });
+    profileCollapsed = {};
+    profileOnlyGaps = false;
+    renderProfile();
+  `, ctx);
+
+  const guideHtml = getEl('profile-groups').innerHTML;
+  const sectionCount = (guideHtml.match(/<section class="pf-group[^"]*"/g) || []).length;
+  check('字段表渲染出 12 组', sectionCount === 12, sectionCount);
+  check('有内容的分组默认展开', /data-group="basic"[\s\S]*pf-rows/.test(guideHtml) || guideHtml.includes('value="张三"'));
+  check('整组为空且无必填的分组默认折叠',
+    /<section class="pf-group is-collapsed" data-group="campusRole"/.test(guideHtml),
+    (guideHtml.match(/is-collapsed" data-group="[a-zA-Z]+"/g) || []));
+  check('有必填缺口的空分组不折叠（教育经历）',
+    !/<section class="pf-group is-collapsed" data-group="education"/.test(guideHtml));
+  check('折叠的分组仍显示角标与必填缺口',
+    /data-group="campusRole"[\s\S]{0,200}<h4>在校职务<\/h4>/.test(guideHtml),
+    (guideHtml.match(/data-group="campusRole"[\s\S]{0,240}/) || [])[0]);
+
+  // 必填标记：只在没填时出现
+  check('必填字段带「必填」标记', guideHtml.includes('<i class="pf-req">必填</i>'));
+  check('已填的必填字段不再标必填',
+    !/姓名<i class="pf-req">/.test(guideHtml), (guideHtml.match(/姓名.{0,40}/) || [])[0]);
+  check('教育组显示必填缺口数', /<span class="pf-group-required"[^>]*>必填缺 \d+<\/span>/.test(guideHtml),
+    (guideHtml.match(/pf-group-required[^<]*/) || [])[0]);
+
+  // 缺失统计一行：还缺几项、必填缺几项
+  check('顶部统计含已填项数', /已填 \d+ 项/.test(getEl('profile-summary').textContent), getEl('profile-summary').textContent);
+  check('顶部统计含还缺项数', /还缺 \d+ 项/.test(getEl('profile-gaps').textContent), getEl('profile-gaps').textContent);
+  check('顶部统计含必填缺口', /必填缺 \d+ 项/.test(getEl('profile-gaps').textContent), getEl('profile-gaps').textContent);
+  check('有待补字段时按钮可点', getEl('profile-next-gap').disabled === false);
+  check('按钮文案为「跳到下一处空缺」', getEl('profile-next-gap').textContent === '跳到下一处空缺');
+
+  // 派生回退：个人信息里的学校留空，用教育经历的值做 placeholder（而不是写进输入框）
+  check('派生字段用 placeholder 提示来自教育经历',
+    /data-path="basic\.school"[^>]*placeholder="[^"]*取自教育经历/.test(guideHtml),
+    (guideHtml.match(/data-path="basic\.school"[^>]*/) || [])[0]);
+  check('派生值没有被写进输入框',
+    !/data-path="basic\.school"[^>]*value="[^"]+"/.test(guideHtml),
+    (guideHtml.match(/data-path="basic\.school"[^>]*/) || [])[0]);
+  check('派生项计入已填', vm.runInContext('profileStats(profile).derived > 0', ctx));
+  check('派生项不再算缺', !vm.runInContext('profileEmptyPaths(profile)', ctx).includes('basic.school'));
+
+  // 「只看空缺」：已填字段整体隐藏，补字段时只看得见要补的
+  getEl('profile-only-gaps').checked = true;
+  getEl('profile-only-gaps')._listeners.change[0]();
+  const gapsOnlyHtml = getEl('profile-groups').innerHTML;
+  check('只看空缺：已填值不再出现', !gapsOnlyHtml.includes('value="张三"'));
+  check('只看空缺：空缺字段仍然渲染', /data-path="basic\.ethnicity"/.test(gapsOnlyHtml),
+    (gapsOnlyHtml.match(/data-path="basic\.[a-zA-Z]+"/g) || []).slice(0, 8));
+
+  // 整组填满的组要给出明确空态，否则用户会以为这一组被吞了
+  vm.runInContext(`
+    profile = normalizeProfile({ basic: {
+      name: '张三', phone: '13800000000', email: 'z@a.com', gender: '男', birthDate: '2002.05',
+      photo: '待上传', degree: '本科', degreeLevel: '学士', major: '新闻学', ethnicity: '汉族',
+      school: '广东海洋大学', nativePlace: '广东汕头', politicalStatus: '共青团员',
+      hometown: '广东汕头', currentCity: '深圳'
+    } });
+    profileOnlyGaps = true;
+    renderProfile();
+  `, ctx);
+  check('只看空缺：全部填满的组给出明确空态', /没有空缺了/.test(getEl('profile-groups').innerHTML));
+
+  getEl('profile-only-gaps').checked = false;
+  getEl('profile-only-gaps')._listeners.change[0]();
+  vm.runInContext(`
+    profile = normalizeProfile({
+      basic: { name: '张三', phone: '13800000000', email: 'z@a.com' },
+      education: [{ school: '广东海洋大学', major: '新闻学', degree: '本科' }],
+      skills: [{ name: 'SQL', level: '熟练' }]
+    });
+    renderProfile();
+  `, ctx);
+  check('关掉只看空缺后已填值回来', getEl('profile-groups').innerHTML.includes('value="张三"'));
+
+  // 跳到下一处空缺：不抛错，且游标会前进
+  let gapClickError = null;
+  try { getEl('profile-next-gap')._listeners.click[0](); } catch (e) { gapClickError = e; }
+  check('跳到下一处空缺不抛错', !gapClickError, gapClickError && gapClickError.message);
+  check('游标前进（连点不会原地打转）', vm.runInContext('profileGapCursor', ctx) === 1);
+
+  // 全部填满时按钮不再假装还能点
+  vm.runInContext(`
+    profile = normalizeProfile({
+      basic: { name: '张三', phone: '13800000000', email: 'z@a.com', gender: '男', birthDate: '2002.05', ethnicity: '汉族' },
+      intent: { targetCity: '深圳' },
+      education: [{ school: '广东海洋大学', college: '文学院', major: '新闻学', degree: '本科', startDate: '2022.09', endDate: '2026.06' }]
+    });
+    renderProfile();
+  `, ctx);
+  check('只在必填填齐时仍提示还缺可选信息',
+    /还缺 \d+ 项/.test(getEl('profile-gaps').textContent), getEl('profile-gaps').textContent);
+  vm.runInContext(`
+    profile = createEmptyProfile();
+    renderProfile();
+  `, ctx);
+  // 空表时几乎全是空缺，按钮仍可点；这里只验证渲染不抛错
+  check('空字段表渲染不抛错', typeof getEl('profile-groups').innerHTML === 'string');
+
+  // 折叠开关：点分组标题切换折叠状态，并写进会话存储
+  vm.runInContext(`
+    profile = normalizeProfile({ basic: { name: '张三' } });
+    profileCollapsed = {};
+    renderProfile();
+  `, ctx);
+  const collapsedBefore = Boolean(sessionStore.profileCollapsed && sessionStore.profileCollapsed.basic);
+  vm.runInContext(`
+    const group = groupById('basic');
+    profileCollapsed['basic'] = !groupIsCollapsed(group, profileGroupStats(profile, group));
+    saveProfileSessionState();
+    renderProfile();
+  `, ctx);
+  check('折叠后该组不再渲染输入框',
+    !/data-group="basic"[\s\S]{0,120}pf-rows/.test(getEl('profile-groups').innerHTML));
+  check('折叠状态写入会话存储',
+    Boolean(sessionStore.profileCollapsed && sessionStore.profileCollapsed.basic === true),
+    { before: collapsedBefore, after: sessionStore.profileCollapsed });
+  check('折叠状态可从存储读回', Boolean(sessionStore.profileCollapsed && sessionStore.profileCollapsed.basic === true));
+
+  console.log('\n=== 8d. 重新解析：手工内容保留 + 删除不复活 ===');
+  vm.runInContext(`
+    profile = normalizeProfile({
+      basic: { name: '我手工填的名字', phone: '13800000000' },
+      education: [{ school: '广东海洋大学', major: '新闻学', degree: '本科' }],
+      experience: [{ company: '甲公司', title: '我改过的职位' }, { company: '乙公司' }]
+    });
+    markProfileDirty(profile, 'basic.name');
+    markProfileDirty(profile, 'experience.0.title');
+    markProfileRemoved(profile, 'experience', { company: '丙公司' });
+    resumeText = '姓名：AI抽到的名字\\n手机：13800000000\\n教育经历\\n广东海洋大学 新闻学 本科 2022.09-2026.06'
+      + '\\n实习经历\\n2025.07-2025.10 甲公司 内容运营实习生'
+      + '\\n2025.01-2025.03 丙公司 运营实习生';
+  `, ctx);
+  await vm.runInContext('parseProfile()', ctx);
+
+  const mergedState = vm.runInContext(`({
+    name: profile.basic.name,
+    title: profile.experience[0].title,
+    companies: profile.experience.map(e => e.company),
+    banner: $('profile-status-title').textContent + '｜' + $('profile-status-detail').textContent
+  })`, ctx);
+  check('重新解析后手工填的字段没被覆盖', mergedState.name === '我手工填的名字', mergedState.name);
+  check('重新解析后条目内手工字段没被覆盖', mergedState.title === '我改过的职位', mergedState.title);
+  check('重新解析时删过的条目不再补回', !mergedState.companies.includes('丙公司'), mergedState.companies);
+  check('重新解析后已删条目之外的旧条目仍在', mergedState.companies.includes('乙公司'), mergedState.companies);
+  check('横幅说明保留了几项手工内容', /保留你手工填的 \d+ 项/.test(mergedState.banner), mergedState.banner);
+  check('横幅说明有几条你删过的不再补回', /条你删过的不再补回/.test(mergedState.banner), mergedState.banner);
 
   // 未上传简历就点解析 → 明确告知缺什么，而不是静默无事发生
   vm.runInContext('resumeText = "";', ctx);

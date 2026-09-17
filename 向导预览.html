@@ -60,11 +60,11 @@
         </label>
         <p class="file-note" id="file-note"></p>
 
-        <!-- 结构化简历：网申预填的数据源，也是后续产出的统一输入 -->
+        <!-- 结构化字段表：网申表单的镜像，是预填与后续产出的唯一数据源 -->
         <section id="profile-panel" class="profile-panel">
           <div class="profile-head">
             <div class="profile-head-text">
-              <p class="eyebrow">结构化简历</p>
+              <p class="eyebrow">网申字段表</p>
               <p class="profile-summary" id="profile-summary">已填 18 项 · 教育 1 段 · 实习/工作 2 段 · 项目 1 个</p>
             </div>
             <div class="profile-head-action">
@@ -96,6 +96,19 @@
 
           <div id="profile-body">
             <div class="profile-meter" role="img" aria-label="信息完成度"><span id="profile-meter-bar" style="width:62%"></span></div>
+
+            <!-- 补充引导：还缺几项、必填缺几项，以及两个补缺的快捷入口 -->
+            <div class="profile-gaps">
+              <p class="profile-gaps-text" id="profile-gaps"></p>
+              <div class="profile-gaps-actions">
+                <button id="profile-next-gap" class="text-button" type="button">跳到下一处空缺</button>
+                <label class="profile-toggle profile-toggle-inline">
+                  <input type="checkbox" id="profile-only-gaps">
+                  <span>只看空缺</span>
+                </label>
+              </div>
+            </div>
+
             <div id="profile-groups" class="profile-groups"><section class="pf-group"><div class="pf-group-head"><h4>基础信息<span class="pf-group-count">7/8</span></h4></div><div class="pf-rows">
 <div class="pf-row"><label>姓名</label><input class="pf-input" value="张三"></div>
 <div class="pf-row"><label>性别</label><input class="pf-input" value="男"></div>

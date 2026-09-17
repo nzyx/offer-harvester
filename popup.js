@@ -377,8 +377,10 @@ $('clear-resume').addEventListener('click', (e) => {
   if (profile) $('profile-hint').textContent = '简历文件已移除，结构化信息仍保留在本机，可继续使用或手动清空。';
 });
 
-// ── 结构化简历（网申预填的数据源）──────────────
-// 流程：简历原文 → AI 抽取六组字段 → 可编辑预览 → 存 chrome.storage.local
+// ── 网申字段表（预填与生成的唯一数据源）────────
+// 结构：12 组字段，与网申表单逐栏对齐（见 profile.js 的 PROFILE_GROUPS）
+// 流程：简历原文 → AI 抽取 12 组 → 用户继续补充 → 存 chrome.storage.local → 预填读它
+// 重新解析：走 profile.js 的 mergeProfile，用户手工填过的字段不会被覆盖
 // 隐私：结构化结果只存本机；未连接 AI 时用本地规则粗解析，不外发任何内容
 
 const profileBody = $('profile-body');
@@ -386,23 +388,42 @@ const profileGroupsEl = $('profile-groups');
 
 const PROFILE_LINES = [
   '正在通读简历原文…',
-  '抽取基础信息与求职意向…',
+  '抽取个人信息与求职意向…',
   '整理教育与实习经历…',
-  '汇总技能与证书…',
-  '马上就好，正在生成结构化预览…'
+  '归集在校职务、实践与项目…',
+  '汇总技能、获奖、语言与证书…',
+  '马上就好，正在生成字段表…'
 ];
 
 // 本地规则的可信字段：格式固定、几乎不会误判，用于给 AI 结果补空缺
 const LOCAL_TRUSTED_KEYS = ['phone', 'email'];
 
-function profileSummaryText() {
-  if (!profile) return '尚未解析';
+// 分组折叠状态与「只看空缺」开关随会话恢复。用户补字段时经常中途切走再回来
+const PROFILE_SESSION_STATE = ['profileCollapsed', 'profileOnlyGaps'];
+
+let profileCollapsed = {};   // 用户显式切换过的分组（没有记录时按「空的组默认折叠」判断）
+let profileOnlyGaps = false; // 只看空缺：隐藏所有已填字段，补字段时只看得见要补的
+let profileGapCursor = 0;    // 「跳到下一处空缺」的游标，每点一次前进一格
+
+function profileCountsText() {
   const s = profileStats(profile);
   const parts = [`已填 ${s.filled} 项`];
   if (s.educationCount) parts.push(`教育 ${s.educationCount} 段`);
-  if (s.experienceCount) parts.push(`实习/工作 ${s.experienceCount} 段`);
+  if (s.experienceCount) parts.push(`实习 ${s.experienceCount} 段`);
   if (s.projectCount) parts.push(`项目 ${s.projectCount} 个`);
+  if (s.campusRoleCount) parts.push(`职务 ${s.campusRoleCount} 段`);
+  if (s.campusPracticeCount) parts.push(`实践 ${s.campusPracticeCount} 段`);
   if (s.sensitiveFilled) parts.push(`敏感 ${s.sensitiveFilled} 项`);
+  return parts.join(' · ');
+}
+
+// 「还缺什么」的常驻一行。计数为 0 时不显示 0 —— 直接给一句明确的结论
+function profileGapsText() {
+  const s = profileStats(profile);
+  const parts = [s.missing ? `还缺 ${s.missing} 项` : '能补的都补上了'];
+  if (s.missing) parts.push(s.requiredMissing ? `其中必填缺 ${s.requiredMissing} 项` : '必填已填齐');
+  else if (s.requiredMissing) parts.push(`必填还缺 ${s.requiredMissing} 项`);
+  if (s.derived) parts.push(`${s.derived} 项由教育经历带出`);
   return parts.join(' · ');
 }
 
@@ -466,20 +487,33 @@ function setProfileSaveState(text, kind) {
   el.dataset.kind = kind || '';
 }
 
-// 只更新摘要、完成度与状态，不重绘整个列表（避免打断用户输入）
+// 只更新摘要、缺失统计、完成度与状态，不重绘整个列表（避免打断用户输入）
 function updateProfileMeta() {
   if (!profile) {
     $('profile-summary').textContent = '尚未解析';
+    $('profile-gaps').textContent = '';
     $('profile-meter-bar').style.width = '0%';
     setProfileState('idle');
     setProfileWhere('idle');
+    updateProfileGapButton();
     return;
   }
   const stats = profileStats(profile);
-  $('profile-summary').textContent = profileSummaryText();
+  $('profile-summary').textContent = profileCountsText();
+  $('profile-gaps').textContent = profileGapsText();
   $('profile-meter-bar').style.width = stats.percent + '%';
   setProfileState(stats.filled ? 'ready' : 'empty');
   setProfileWhere(stats.filled ? 'ready' : 'idle');
+  updateProfileGapButton();
+}
+
+// 没有空缺时按钮不该留在那里装作还能点
+function updateProfileGapButton() {
+  const btn = $('profile-next-gap');
+  if (!btn) return;
+  const hasGap = Boolean(profile) && profileEmptyPaths(profile).length > 0;
+  btn.disabled = !hasGap;
+  btn.textContent = hasGap ? '跳到下一处空缺' : '没有待补的字段';
 }
 
 // 解析完成后把面板带进视野。只在面板确实被滚出视野时才动，避免无谓的跳动。
@@ -500,17 +534,27 @@ function scrollProfileIntoView() {
   if (outOfView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function renderProfileField(field, path, value) {
+// 派生回退的提示：这几个字段留空也能用，值来自教育经历。
+// 用 placeholder 而不是直接写进输入框 —— 派生值不能落库，否则用户改教育经历时它会过期
+function profileDerivedPlaceholder(groupId, key, value) {
+  if (value) return '';
+  const resolved = profileResolvedValue(profile, groupId, key);
+  if (!resolved.derived) return '';
+  return `${resolved.value}（取自教育经历）`;
+}
+
+function renderProfileField(field, path, value, placeholder) {
   const attrs = `class="pf-input" data-path="${escapeHtml(path)}"`;
+  const ph = escapeHtml(placeholder || field.ph || '');
   if (field.type === 'textarea') {
-    return `<textarea ${attrs} rows="2" placeholder="${escapeHtml(field.ph || '')}">${escapeHtml(value)}</textarea>`;
+    return `<textarea ${attrs} rows="2" placeholder="${ph}">${escapeHtml(value)}</textarea>`;
   }
   if (!field.options) {
-    return `<input ${attrs} type="text" placeholder="${escapeHtml(field.ph || '')}" value="${escapeHtml(value)}">`;
+    return `<input ${attrs} type="text" placeholder="${ph}" value="${escapeHtml(value)}">`;
   }
   // 有候选值时用 datalist：给建议但不限制填写
   const listId = `pf-opts-${path.replace(/\./g, '-')}`;
-  return `<input ${attrs} type="text" list="${listId}" placeholder="${escapeHtml(field.ph || '')}" value="${escapeHtml(value)}">`
+  return `<input ${attrs} type="text" list="${listId}" placeholder="${ph}" value="${escapeHtml(value)}">`
     + `<datalist id="${listId}">${field.options.map(o => `<option value="${escapeHtml(o)}"></option>`).join('')}</datalist>`;
 }
 
@@ -521,62 +565,131 @@ function groupCountBadge(filled, total) {
   return `<span class="pf-group-count">${filled}/${total}</span>`;
 }
 
-function renderProfileObjectGroup(group, includeSensitive) {
-  const visible = group.fields.filter(f => includeSensitive || !f.sensitive);
-  const filledCount = visible.filter(f => profile?.[group.id]?.[f.key]).length;
-  const rows = visible.map(field => {
-    const path = `${group.id}.${field.key}`;
-    const value = getProfilePath(profile, path) || '';
-    return `<div class="pf-row${field.sensitive ? ' is-sensitive' : ''}">
-      <label>${escapeHtml(field.label)}${field.sensitive ? '<i>敏感</i>' : ''}</label>
-      ${renderProfileField(field, path, value)}
+// 必填缺口用红点表示，不塞进角标 —— 角标是「已填/总数」，两个数混在一起谁也读不懂
+function groupRequiredMark(requiredMissing) {
+  if (!requiredMissing) return '';
+  return `<span class="pf-group-required" title="本组还有 ${requiredMissing} 个必填项没填">必填缺 ${requiredMissing}</span>`;
+}
+
+// 标签上的标记。必填只标「还没填的」，填好了就不用继续提醒
+function fieldTags(field, filled) {
+  let out = '';
+  if (field.required && !filled) out += '<i class="pf-req">必填</i>';
+  if (field.sensitive) out += '<i>敏感</i>';
+  if (field.file) out += '<i class="pf-file">需手动上传</i>';
+  return out;
+}
+
+function profileRowVisible(field, filled) {
+  return !profileOnlyGaps || !filled;
+}
+
+// resolved 是 profileResolvedValue 的结果：value 可能是直接值，也可能是派生值。
+// 派生值只做 placeholder，绝不写进输入框
+function renderPfRow(field, path, value, resolved) {
+  const classes = ['pf-row'];
+  if (field.sensitive) classes.push('is-sensitive');
+  if (field.required && !resolved.value) classes.push('is-missing-required');
+  const groupId = path.split('.')[0];
+  return `<div class="${classes.join(' ')}">
+      <label>${escapeHtml(field.label)}${fieldTags(field, resolved.value)}</label>
+      ${renderProfileField(field, path, value, profileDerivedPlaceholder(groupId, field.key, value))}
     </div>`;
+}
+
+function groupFoldBar(group, stats) {
+  const collapsed = groupIsCollapsed(group, stats);
+  return `<div class="pf-group-head">
+      <button class="pf-group-toggle" type="button" data-group="${group.id}" aria-expanded="${collapsed ? 'false' : 'true'}">
+        <span class="pf-caret" aria-hidden="true"></span>
+        <h4>${escapeHtml(group.label)}${groupCountBadge(stats.filled, stats.total)}${groupRequiredMark(stats.requiredMissing)}</h4>
+      </button>
+    </div>`;
+}
+
+function renderProfileObjectGroup(group, includeSensitive) {
+  const stats = profileGroupStats(profile, group);
+  const visible = group.fields.filter(f => includeSensitive || !f.sensitive);
+  const shown = visible.filter(field => profileRowVisible(
+    field, profileResolvedValue(profile, group.id, field.key).value
+  ));
+  const rows = shown.map(field => {
+    const path = `${group.id}.${field.key}`;
+    const resolved = profileResolvedValue(profile, group.id, field.key);
+    return renderPfRow(field, path, getProfilePath(profile, path) || '', resolved);
   }).join('');
+
   const hiddenCount = group.fields.filter(f => f.sensitive && !includeSensitive).length;
   const notes = [];
   if (hiddenCount) notes.push(`已隐藏 ${hiddenCount} 项敏感字段（默认不写入网申页面）`);
-  if (!filledCount) notes.push('简历里没有识别到这一组信息，可直接在下面手动补充。');
+  if (!shown.length) {
+    notes.push(profileOnlyGaps ? '这一组没有空缺了。' : '简历里没有识别到这一组信息，可直接在下面手动补充。');
+  }
   const note = notes.length ? `<p class="pf-note">${notes.join(' ')}</p>` : '';
-  return `<section class="pf-group">
-    <div class="pf-group-head">
-      <h4>${escapeHtml(group.label)}${groupCountBadge(filledCount, visible.length)}</h4>
-    </div>
-    <div class="pf-rows">${rows}</div>${note}
+  const body = groupIsCollapsed(group, stats) ? '' : `<div class="pf-rows">${rows}</div>${note}`;
+
+  return `<section class="pf-group${groupIsCollapsed(group, stats) ? ' is-collapsed' : ''}" data-group="${group.id}">
+    ${groupFoldBar(group, stats)}
+    ${body}
   </section>`;
 }
 
 function renderProfileListGroup(group) {
   const items = Array.isArray(profile[group.id]) ? profile[group.id] : [];
-  const filledCount = items.reduce((sum, item) => (
-    sum + group.fields.filter(field => item[field.key]).length
-  ), 0);
+  const stats = profileGroupStats(profile, group);
+  const collapsed = groupIsCollapsed(group, stats);
+  if (collapsed) {
+    return `<section class="pf-group is-collapsed" data-group="${group.id}">
+      ${groupFoldBar(group, stats)}
+    </section>`;
+  }
+
   const cards = items.map((item, index) => {
-    const rows = group.fields.map(field => {
-      const path = `${group.id}.${index}.${field.key}`;
-      return `<div class="pf-row">
-        <label>${escapeHtml(field.label)}</label>
-        ${renderProfileField(field, path, item[field.key] || '')}
-      </div>`;
-    }).join('');
+    const rows = group.fields
+      .filter(field => profileRowVisible(field, item[field.key]))
+      .map(field => {
+        const path = `${group.id}.${index}.${field.key}`;
+        const value = item[field.key] || '';
+        return renderPfRow(field, path, value, { value, derived: false });
+      }).join('');
+    const emptyHint = rows ? '' : '<p class="pf-note">这一条没有空缺了。</p>';
+    // 用户手工改过的条目上标记一下，让他知道重新解析时这些内容不会被覆盖
+    const dirty = Array.isArray(item._dirty) && item._dirty.length
+      ? '<span class="pf-item-dirty" title="这几项是你手工填的，重新解析会保留">已手工修改</span>'
+      : '';
     return `<article class="pf-item">
       <div class="pf-item-head">
         <span class="pf-item-idx">${String(index + 1).padStart(2, '0')}</span>
         <span class="pf-item-title">${escapeHtml(group.itemLabel)}</span>
+        ${dirty}
         <button class="pf-remove" type="button" data-group="${group.id}" data-index="${index}" title="删除这一条">×</button>
       </div>
-      <div class="pf-rows">${rows}</div>
+      <div class="pf-rows">${rows}</div>${emptyHint}
     </article>`;
   }).join('');
+
   const empty = items.length
     ? ''
     : `<p class="pf-note">简历里没有识别到${escapeHtml(group.label)}，可点「+ 添加一条」手动补充。</p>`;
-  return `<section class="pf-group">
+
+  return `<section class="pf-group" data-group="${group.id}">
     <div class="pf-group-head">
-      <h4>${escapeHtml(group.label)}${groupCountBadge(filledCount, items.length * group.fields.length)}</h4>
+      <button class="pf-group-toggle" type="button" data-group="${group.id}" aria-expanded="true">
+        <span class="pf-caret" aria-hidden="true"></span>
+        <h4>${escapeHtml(group.label)}${groupCountBadge(stats.filled, stats.total)}${groupRequiredMark(stats.requiredMissing)}</h4>
+      </button>
       <button class="pf-add" type="button" data-group="${group.id}">+ 添加一条</button>
     </div>
     ${cards}${empty}
   </section>`;
+}
+
+// 默认规则：整组空的收起来，但「还有必填项没填」的组要展开 ——
+// 12 组全展开有好几屏，用户的视线该先落在自己还得动手的地方
+function groupIsCollapsed(group, stats) {
+  const known = Object.prototype.hasOwnProperty.call(profileCollapsed, group.id);
+  if (known) return Boolean(profileCollapsed[group.id]);
+  return stats.isEmpty && !stats.requiredMissing;
 }
 
 function renderProfile() {
@@ -601,10 +714,31 @@ const saveProfileNow = async () => {
 
 const saveProfileDebounced = debounce(saveProfileNow, 600);
 
+// 会话状态（折叠的分组、只看空缺开关）单独存 session，不污染字段表本身
+function saveProfileSessionState() {
+  try {
+    chrome.storage.session.set({
+      profileCollapsed: profileCollapsed,
+      profileOnlyGaps: profileOnlyGaps
+    });
+  } catch (e) { /* 无 session 存储（测试环境）时忽略 */ }
+}
+
 profileGroupsEl.addEventListener('input', (e) => {
   const el = e.target.closest('[data-path]');
   if (!el || !profile) return;
-  setProfilePath(profile, el.dataset.path, el.value);
+  const path = el.dataset.path;
+  setProfilePath(profile, path, el.value);
+  // 记下「这一格是手工填的」：重新解析时 AI 的新值不会覆盖它。
+  // 少了这一步，用户辛苦补的几十项会被下一次解析冲掉
+  markProfileDirty(profile, path);
+  // 用户把条目改成了曾经删过的名字 → 撤销那条删除记录，重新解析才会再认它
+  const groupId = path.split('.')[0];
+  const key = path.split('.').pop();
+  if (PROFILE_MATCH_KEYS[groupId] === key) {
+    const item = profile[groupId][Number(path.split('.')[1])];
+    if (item) clearProfileRemoved(profile, groupId, item);
+  }
   updateProfileMeta();
   setProfileSaveState('未保存的修改…', 'pending');
   saveProfileDebounced();
@@ -612,26 +746,47 @@ profileGroupsEl.addEventListener('input', (e) => {
 
 profileGroupsEl.addEventListener('click', (e) => {
   if (!profile) return;
+
   const removeBtn = e.target.closest('.pf-remove');
   if (removeBtn) {
     const group = groupById(removeBtn.dataset.group);
     if (!group) return;
-    profile[group.id].splice(Number(removeBtn.dataset.index), 1);
+    const index = Number(removeBtn.dataset.index);
+    const item = profile[group.id][index];
+    // 先记删除名单再删：不记的话下次解析这条又会被拉回来，用户会以为删除没生效
+    if (item) markProfileRemoved(profile, group.id, item);
+    profile[group.id].splice(index, 1);
     renderProfile();
     saveProfileNow();
     return;
   }
+
   const addBtn = e.target.closest('.pf-add');
   if (addBtn) {
     const group = groupById(addBtn.dataset.group);
     if (!group) return;
     profile[group.id].push(createEmptyItem(group));
+    // 新加一条就把这一组展开，否则用户点完什么都没有发生
+    delete profileCollapsed[group.id];
+    saveProfileSessionState();
     renderProfile();
     saveProfileNow();
     // 聚焦到新条目的第一个输入框
     const inputs = profileGroupsEl.querySelectorAll('.pf-input');
     const last = inputs[inputs.length - 1];
     if (last) last.focus();
+    return;
+  }
+
+  const toggle = e.target.closest('.pf-group-toggle');
+  if (toggle) {
+    const groupId = toggle.dataset.group;
+    const group = groupById(groupId);
+    if (!group) return;
+    const stats = profileGroupStats(profile, group);
+    profileCollapsed[groupId] = !groupIsCollapsed(group, stats);
+    saveProfileSessionState();
+    renderProfile();
   }
 });
 
@@ -639,22 +794,84 @@ $('profile-sensitive').addEventListener('change', () => {
   renderProfile();
 });
 
-// AI 抽取结果的可信度补丁：只补「格式固定」的字段，不做语义猜测
-function mergeProfileGaps(primary, fallback) {
-  for (const group of PROFILE_GROUPS) {
-    if (group.kind === 'list') {
-      if (!primary[group.id]?.length && fallback[group.id]?.length) {
-        primary[group.id] = fallback[group.id];
-      }
-      continue;
-    }
-    for (const field of group.fields) {
-      if (LOCAL_TRUSTED_KEYS.includes(field.key) && !primary[group.id][field.key] && fallback[group.id][field.key]) {
-        primary[group.id][field.key] = fallback[group.id][field.key];
-      }
+$('profile-only-gaps').addEventListener('change', () => {
+  profileOnlyGaps = Boolean($('profile-only-gaps').checked);
+  saveProfileSessionState();
+  renderProfile();
+});
+
+// 跳到下一处空缺：按「必填缺口 → 可选空缺」的顺序循环。
+// 用游标而不是每次都跳回第一项，否则连点两下等于没点
+$('profile-next-gap').addEventListener('click', () => {
+  if (!profile) return;
+  const paths = profileEmptyPaths(profile);
+  if (!paths.length) return;
+  const path = paths[profileGapCursor % paths.length];
+  profileGapCursor = (profileGapCursor + 1) % paths.length;
+
+  // 目标可能落在折叠的组里或会被「只看空缺」筛掉，先确保它可见
+  const groupId = path.split('.')[0];
+  const group = groupById(groupId);
+  if (group) {
+    const stats = profileGroupStats(profile, group);
+    if (groupIsCollapsed(group, stats)) {
+      delete profileCollapsed[groupId];
+      renderProfile();
     }
   }
-  return primary;
+  const el = profileGroupsEl.querySelector(`[data-path="${path}"]`);
+  if (!el) return;
+  if (typeof el.focus === 'function') el.focus();
+  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
+// 恢复折叠状态与开关（在声明之后调用，避免存储回调同步触发时命中 TDZ）
+chrome.storage.session.get(PROFILE_SESSION_STATE, (data) => {
+  if (!data) return;
+  if (data.profileCollapsed && typeof data.profileCollapsed === 'object') {
+    profileCollapsed = data.profileCollapsed;
+  }
+  profileOnlyGaps = Boolean(data.profileOnlyGaps);
+  const toggle = $('profile-only-gaps');
+  if (toggle) toggle.checked = profileOnlyGaps;
+  if (profile) renderProfile();
+});
+
+// AI 结果的信任度补丁：只用本地规则补「格式固定、几乎不会误判」的两个字段。
+// 其余字段一律以 AI 为准 —— 本地规则是粗解析，语义猜测错了只会拉低质量
+function applyLocalTrustedPatch(aiProfile, localProfile) {
+  if (!aiProfile || !localProfile) return aiProfile;
+  for (const key of LOCAL_TRUSTED_KEYS) {
+    if (!aiProfile.basic[key] && localProfile.basic[key]) aiProfile.basic[key] = localProfile.basic[key];
+  }
+  return aiProfile;
+}
+
+// 合并结果的分组量词。「新增 1 段实习」比「新增 1 项」有用得多
+const PROFILE_ADDED_LABEL = {
+  education: '段教育经历',
+  experience: '段实习',
+  projects: '个项目',
+  campusRole: '段在校职务',
+  campusPractice: '段在校实践',
+  skills: '项技能',
+  honors: '项获奖',
+  languages: '项语言',
+  certificates: '张证书'
+};
+
+// 如实说明这次重新解析做了什么。用户最关心的是「我手工填的还在不在」
+function mergeReportText(report) {
+  if (!report) return '';
+  const parts = [];
+  const added = Object.keys(report.addedByGroup || {})
+    .map(id => `${report.addedByGroup[id]} ${PROFILE_ADDED_LABEL[id] || '条'}`);
+  if (report.updated) parts.push(`更新 ${report.updated} 项`);
+  if (report.dirtyKept) parts.push(`保留你手工填的 ${report.dirtyKept} 项`);
+  if (added.length) parts.push(`新增 ${added.join('、')}`);
+  if (report.keptItems) parts.push(`保留 ${report.keptItems} 条这次没抽到的经历`);
+  if (report.blocked) parts.push(`${report.blocked} 条你删过的不再补回`);
+  return parts.join('｜');
 }
 
 function refreshProfileVisibility() {
@@ -664,10 +881,10 @@ function refreshProfileVisibility() {
   // hint 讲「这一步是干什么的」，where 讲「数据在哪」——两者分工不重复
   if (profile) {
     $('profile-parse').textContent = '重新解析';
-    $('profile-hint').textContent = '逐项核对后即可用于网申预填与后续生成。改完会自动保存。';
+    $('profile-hint').textContent = '逐项核对后即可用于网申预填与后续生成。改完会自动保存，重新解析不会覆盖你手工填过的字段。';
   } else if (hasText) {
     $('profile-parse').textContent = '解析';
-    $('profile-hint').textContent = '点「解析」把简历拆成姓名、学历、实习等标准字段。未连接 AI 时用本地规则粗解析。';
+    $('profile-hint').textContent = '点「解析」把简历拆成 12 组网申标准字段。解析不到的留空，你在下面补即可。未连接 AI 时用本地规则粗解析。';
   } else {
     $('profile-hint').textContent = '';
   }
@@ -709,11 +926,11 @@ async function parseProfile() {
         const raw = await requestCompletion({
           settings,
           promptText: `${RESUME_EXTRACT_PROMPT}\n\n【简历原文】\n${resumeText.slice(0, 12000)}`,
-          maxTokens: 6000,
+          maxTokens: 8000,
           temperature: 0,
           requestKey: 'profile'
         });
-        extracted = mergeProfileGaps(parseProfileText(raw), extractProfileLocally(resumeText));
+        extracted = applyLocalTrustedPatch(parseProfileText(raw), extractProfileLocally(resumeText));
         source = 'ai';
       } catch (aiError) {
         // 用户主动取消 → 交给外层统一处理，不要偷偷用本地规则把取消变成"成功"
@@ -738,16 +955,21 @@ async function parseProfile() {
       return;
     }
 
-    profile = extracted;
+    // 重新解析走智能合并：AI 的新值只更新「非手工」字段，
+    // 用户改过的字段、以及这次没抽到的旧内容都原样保留
+    const merged = mergeProfile(extracted, previous);
+    const isReparse = Boolean(previous && profileHasValue(previous));
+    profile = merged.profile;
+    profileGapCursor = 0;
     $('profile-sensitive').checked = false;
     renderProfile();
     saveProfileToStorage(profile);
 
     // 成功横幅带字段计数与经历段数：用户不必自己数输入框就知道"抽到了多少"
     const stats = profileStats(profile);
-    const shapeParts = [];
+    const shapeParts = [`已填 ${stats.filled} 项`];
     if (stats.educationCount) shapeParts.push(`教育 ${stats.educationCount} 段`);
-    if (stats.experienceCount) shapeParts.push(`实习/工作 ${stats.experienceCount} 段`);
+    if (stats.experienceCount) shapeParts.push(`实习 ${stats.experienceCount} 段`);
     if (stats.projectCount) shapeParts.push(`项目 ${stats.projectCount} 个`);
     const shape = shapeParts.join(' · ');
 
@@ -762,11 +984,16 @@ async function parseProfile() {
     } else {
       tail = '未连接 AI，本次用本地规则解析。到「设置」连接 AI 后重新解析会更准更全。';
     }
+
+    // 重新解析时把合并详情说清楚，用户才知道自己的手工内容有没有被保住
+    const mergeNote = isReparse ? mergeReportText(merged.report) : '';
     const fellBack = source === 'local-fallback';
     setProfileNotice(
       fellBack ? 'warn' : 'ok',
-      fellBack ? `已用本地规则解析 ${stats.filled} 项` : `解析完成 · 已保存到本机 ${stats.filled} 项`,
-      [shape, tail].filter(Boolean).join('｜')
+      isReparse
+        ? `解析完成 · 已保存到本机 ${stats.filled} 项`
+        : (fellBack ? `已用本地规则解析 ${stats.filled} 项` : `解析完成 · 已保存到本机 ${stats.filled} 项`),
+      [shape, mergeNote, tail].filter(Boolean).join('｜')
     );
     setProfileSaveState('已保存到本机', 'ok');
     scrollProfileIntoView();
@@ -793,8 +1020,12 @@ async function clearProfile() {
   await clearProfileFromStorage();
   profileBody.hidden = true;
   $('profile-sensitive').checked = false;
+  // 清空是「重新来过」，折叠记录跟着一起清；「只看空缺」是用户的阅读习惯，保留
+  profileCollapsed = {};
+  profileGapCursor = 0;
+  saveProfileSessionState();
   setProfileSaveState('');
-  setProfileNotice('info', '已清空结构化信息', '简历原文仍然保留，随时可以重新解析。');
+  setProfileNotice('info', '已清空字段表', '简历原文仍然保留，随时可以重新解析。');
   refreshProfileVisibility();
   updateProfileMeta();
 }
@@ -818,7 +1049,8 @@ $('profile-save').addEventListener('click', () => {
   setTimeout(() => { btn.textContent = '保存修改'; }, 1500);
 });
 
-// 启动时恢复结构化简历；老用户只有纯文本时提示一键重建（不静默丢弃）
+// 启动时恢复字段表。loadProfileFromStorage 内部会把 v1 的 6 组数据迁移到 v2 的 12 组，
+// 所以老用户升级后不会看到空表
 (async function initProfile() {
   const stored = await loadProfileFromStorage();
   if (stored && profileHasValue(stored)) {
@@ -826,8 +1058,9 @@ $('profile-save').addEventListener('click', () => {
     renderProfile();
     // 恢复后明确告知：这些字段是从本机存储读回来的，不是刚解析的
     const stats = profileStats(profile);
-    setProfileNotice('ok', `已从本机读回 ${stats.filled} 项结构化信息`,
-      '上次解析的结果，可直接用于网申预填。需要更新请点「重新解析」。');
+    const gap = stats.requiredMissing ? `，必填还缺 ${stats.requiredMissing} 项` : '';
+    setProfileNotice('ok', `已从本机读回 ${stats.filled} 项信息`,
+      `上次解析的结果${gap}，可直接用于网申预填。重新解析不会覆盖你手工填过的字段。`);
     setProfileSaveState('已保存到本机', 'ok');
   }
   refreshProfileVisibility();
@@ -845,14 +1078,20 @@ function hasResume() {
 }
 
 function structuredProfile() {
-  if (profile && profileHasValue(profile)) return profile;
-  if (!resumeText || !resumeText.trim()) return null;
-  try {
-    const local = extractProfileLocally(resumeText);
-    return profileHasValue(local) ? local : null;
-  } catch (e) {
-    return null;
-  }
+  const base = (profile && profileHasValue(profile)) ? profile
+    : (() => {
+      if (!resumeText || !resumeText.trim()) return null;
+      try {
+        const local = extractProfileLocally(resumeText);
+        return profileHasValue(local) ? local : null;
+      } catch (e) {
+        return null;
+      }
+    })();
+  if (!base) return null;
+  // 预填读的是「派生后」的副本：个人信息里的最高学历 / 最高学位 / 专业名称 / 毕业学校
+  // 留空时自动从教育经历带出，用户只填一处，两栏都能填上
+  return applyProfileDerived(base);
 }
 
 function jobReady() {
@@ -875,7 +1114,7 @@ function stepSummary(name) {
     const parts = [];
     const fileName = $('file-label').textContent;
     if (fileName && fileName !== '上传简历') parts.push(fileName);
-    if (profile) parts.push(profileSummaryText());
+    if (profile) parts.push(profileCountsText());
     else parts.push(`已读取 ${resumeText.length} 字，网申预填时用本地规则粗解析`);
     return parts.join(' · ');
   }
