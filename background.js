@@ -58,6 +58,9 @@ chrome.storage.session.get(['copyGuardEnabled'], (data) => {
 // ── 消息处理 ──────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // 只接受本扩展自己发出的消息（popup / 内容脚本），理由同 form-fill-page.js。
+  // 这几条分支会改复制保护状态并广播到全标签页，不能由外部消息触发。
+  if (!sender || sender.id !== chrome.runtime.id) return;
   if (message.type === 'copyGuard:enable') {
     copyEnabled = true;
     chrome.storage.session.set({ copyGuardEnabled: true });

@@ -163,6 +163,10 @@
 - **只注入主 frame**：`jd-grab.js` 与 `form-fill-page.js` 的 content script 项都设 `all_frames: false`，popup 侧用 `sendMessage(tabId, msg, { frameId: 0 }, cb)`。若将来要覆盖 iframe 内的表单，改这里而不是在脚本里加 `window.top` 判断。
 - **必须消费 `chrome.runtime.lastError`**：页面在扩展安装/更新之前就已打开时接收端不存在，不读 `lastError` 会在控制台留下未捕获错误。这种情况的文案要引导用户「刷新网页后重试」，而不是笼统的失败。
 - **异步应答必须 `return true`**：`jd-grab.js` 里等 DOM 就绪是异步的，监听器返回 `true` 才能保持消息通道开启，否则 popup 会永远收不到响应。`form-fill-page.js` 的三个分支都是同步的，**不要加 `return true`**。
+- **⚠️ 消息入口必须校验 `sender.id`**：所有 `chrome.runtime.onMessage` 监听的第一句都必须是 `if (!sender || sender.id !== chrome.runtime.id) return;`。当前 4 处：`form-fill-page.js` / `jd-grab.js` / `copy-guard.js` / `background.js`。
+  - 当前 manifest 没声明 `externally_connectable`，网页和其他扩展都发不进来，所以这道校验**眼下是纯加固**——但它是**唯一一道**。哪天为别的功能开放了外部消息通道，没有它，任意网页就能借 `form:fill` 触发填表、借 `form:scan` 读走整页结构、借 `jd:grab` 读走页面正文。
+  - `tests/form-fill-page.test.js` 第 7 节是**源码级**断言（扫源码），查两件事：有没有校验、校验是否排在第一个业务分支之前（排在后面等于没防）。**新增任何 listener 都必须一起加，否则测试立刻红。**
+  - 为什么不测行为：这些 listener 只在真实扩展环境注册，node 下没有 `chrome.runtime`，行为测不到，只能靠源码级断言守。
 - **抓取不得静默覆盖用户内容**：覆盖前把原文存进 `grabUndo` 并提供「撤销替换」；用户一旦手动改动内容（`jobInput.value !== grabUndo.grabbed`）撤销立即失效，避免撤销把用户刚编辑的内容冲掉。
 - **`jd-extract.js` / `form-fill.js` 顶层禁止副作用**：它们同时被 content script 直接执行、被 `tests/*.test.js` 用 `new Function` 包裹执行，所以顶层只能是函数/常量声明。
 - **正则一律不带 `g` / `y`**：带 `g` 的正则用于 `.test()` 会推进 `lastIndex`，导致同一正则对相同输入交替返回真假。需要计数时用 `countMatches`（内部新建带 `g` 的副本）。
@@ -228,7 +232,8 @@ node tests/profile.test.js     # 数据层：12 组结构、字段规整、分�
 node tests/form-fill.test.js   # 预填算法：正向必认出、反向必认不出、阻断规则、选项匹配、经历推进、新旧字段互斥、
                               #        章节关键词搬家（源码级）、「至今」勾选、个人信息区块取「最高那一档」、
                               #        form-map.md 与 FILL_RULES 枚举一致性、真机报告驱动用例
-node tests/form-fill-page.test.js # 内容脚本：标签解析（区块反推）、无语义文字识别、控件类型判定
+node tests/form-fill-page.test.js # 内容脚本：标签解析（区块反推）、无语义文字识别、控件类型判定、
+                              #        消息入口的 sender 校验（源码级，覆盖 4 个 listener）
 node tests/render.test.js      # 渲染层：DOM 桩里真实执行 popup.js，验面板渲染、转义安全、向导流转、字段表折叠与必填标记、
                               #        补充引导的缺失统计、重新解析时手工内容保留与删除不复活、抓取与预填状态机、
                               #        请求重试与降级、诊断报告
@@ -251,6 +256,16 @@ node tests/check-resume.js 简历.pdf --text   # 额外打印重建后的文本�
 `tests/render.test.js` 的脚本加载列表必须与 `popup.html` 的 `<script>` 顺序一致（当前 6 个：`common.js` → `profile.js` → `resume-text.js` → `form-fill.js` → `prompts.js` → `popup.js`）。新增共享脚本时两处都要加，漏了会在运行时才暴露 `xxx is not defined`。
 
 所有脚本都用 `console.log` 逐条打印 ✓ / ✗ 并以退出码反映结果。**新增字段或改动解析规则时必须同步补断言**——这些脚本已经在开发中抓出过「专业名被章节词表误杀」「本地解析与 AI 解析产出两种结构」「下拉框清单显示 option value 而非选项文字」这类只有跑真数据才暴露的问题。
+
+## 隐私与安全边界（改动前必读）
+
+完整审查见 `项目安全审查报告.md`（v1.6.1 版）。以下几项是不可破坏的底线，任何改动都不能让它们退化：
+
+- **不配 API Key → 简历解析必须走纯本地、零外发**：`popup.js` 的 `useAi = Boolean(settings.apiUrl && settings.apiKey && RESUME_EXTRACT_PROMPT)` 分支走 `extractProfileLocally()`，AI 失败也回退它（`local-fallback`）。这是本项目最强的隐私开关，**不能让「必须联网」成为使用前提**。
+- **最小外发**：AI 字段映射只发页面控件结构（`buildFormMapPrompt`：类型 / 标签 / placeholder / name / id / 选项文字），绝不含用户数据；`form:fill` 只发已匹配的 `{ ref, value }`，**不发整个字段表**。预填链路（`form-fill.js` / `form-fill-page.js`）内**零 `fetch`**。
+- **敏感字段默认关闭**：4 项 —— 身份证 `basic.idCard` / 银行卡 `basic.bankAccount` / 家庭住址 `basic.homeAddress` / 紧急联系人 `basic.emergencyContact`，由 `sensitive: true` 标记经 `PROFILE_SENSITIVE_KEYS` 动态收集。**新增敏感字段只加标记，别硬编码清单。**
+- **真网络请求只有 2 处**：AI 调用（`popup.js`）与设置页连接诊断（`options.js`）。两处都必须带 `redirect: 'error'` 和 `referrer: 'no-referrer'`（旧审查报告的 P0，已修，**别回退**）。其余 `fetch` 都是 `chrome.runtime.getURL` 读扩展内部文件，不是网络。
+- **存储边界**：字段表落 `storage.local`（明文持久，用户知情 —— 这是「换简历只改差异」的必然代价），简历原文 / JD / 生成结果落 `storage.session`（关浏览器清空）。**往 `local` 加新数据前先问：它真的需要持久吗？**
 
 ## 设计原则
 

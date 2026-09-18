@@ -65,7 +65,9 @@
 
   // ── 监听后台消息 ────────────────────────────
 
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender) => {
+    // 只接受本扩展自己发出的消息（background 转发复制保护开关），理由同 form-fill-page.js
+    if (!sender || sender.id !== chrome.runtime.id) return;
     if (message.type === 'copyGuard:set') apply(message.enabled);
   });
 

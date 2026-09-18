@@ -372,5 +372,32 @@ check('可键入的自定义下拉框判为可搜索',
 check('只读的自定义下拉框判为不可输入',
   isSearchableCustomSelect(input({ 'aria-haspopup': 'listbox', readonly: '' }), 'custom-select') === false);
 
+// ── 7. 消息入口只接受本扩展的消息（源码级回归）──
+
+console.log('\n=== 7. 消息入口的 sender 校验 ===');
+
+// 这些 listener 只在真实扩展环境里注册（node 下没有 chrome.runtime），行为测不到，
+// 所以改为扫源码：凡注册了 onMessage 的文件，都必须在函数体开头校验 sender.id。
+// 与 form-fill.test.js 第 15 节同一思路 —— 这类「防回退」约束只能靠源码级断言守住。
+//
+// 为什么必须有它：网页脚本够不到 chrome.runtime，manifest 也没声明 externally_connectable，
+// 所以这道校验眼下是纯加固。但它是唯一一道 —— 哪天为了别的功能开放外部消息通道，
+// 没有它，任意网页就能借 form:fill 触发填表、借 form:scan 读走整页结构、借 jd:grab 读走正文。
+const listenerFiles = ['form-fill-page.js', 'jd-grab.js', 'copy-guard.js', 'background.js'];
+for (const file of listenerFiles) {
+  const src = fs.readFileSync(path.join(root, file), 'utf8');
+  const at = src.indexOf('chrome.runtime.onMessage.addListener');
+  check(file + ' 注册了消息监听', at >= 0);
+  if (at < 0) continue;
+  // 只看监听回调这一段，避免文件里别处的同名字符串蒙混过关
+  const body = src.slice(at, at + 700);
+  const guardAt = body.search(/sender\.id\s*!==\s*chrome\.runtime\.id/);
+  check(file + ' 的消息入口校验 sender.id', guardAt >= 0, body.slice(0, 140));
+  // 校验必须在第一个业务分支之前，否则等于没防（后面照样会执行）
+  const firstTypeUse = body.search(/message\.type/);
+  check(file + ' 的校验排在业务分支之前',
+    guardAt >= 0 && (firstTypeUse < 0 || guardAt < firstTypeUse), [guardAt, firstTypeUse]);
+}
+
 console.log(`\n──────── 结果：${pass} 通过 / ${fail} 失败 ────────`);
 process.exit(fail ? 1 : 0);

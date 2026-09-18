@@ -78,6 +78,9 @@
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // 只接受本扩展自己发出的消息，理由同 form-fill-page.js：这个是页面文字的出口，
+    // 一旦消息通道对外开放，任意网页都能借它读走当前页正文
+    if (!sender || sender.id !== chrome.runtime.id) return;
     if (!message || message.type !== 'jd:grab') return;
     grabJobText()
       .then(sendResponse)

@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "minimum_chrome_version": "114",
     "name": "面邀收割机",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "description": "面邀收割机：粘贴岗位JD即可自动生成面试准备方案、高频问题预测、自我介绍定制和现场技巧。上传简历自动解析成 12 组标准字段（与网申表单一栏对一栏）并可一键预填进任意网申表单（只填不提交），抽不到的字段可以自己补，手工补过的内容在重新解析时不会被覆盖。支持OpenAI/DeepSeek/Kimi/GLM/通义千问/豆包/Claude等多种AI服务，数据本地存储。",
     "action": {
         "default_title": "打开面邀收割机",

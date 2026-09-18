@@ -775,6 +775,10 @@
   // 引入做纯函数验证，而 node 里没有 chrome.runtime。
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      // 只接受本扩展自己发出的消息。网页脚本够不到 chrome.runtime，manifest 也没声明
+      // externally_connectable，所以这道校验眼下是纯加固 —— 但它是唯一一道：
+      // 哪天为了别的功能开放了外部消息通道，没有它，任意网页就能触发填表、读走整页结构。
+      if (!sender || sender.id !== chrome.runtime.id) return;
       const type = message && message.type;
       if (type === 'form:scan') { sendResponse(scanPage()); return; }
       if (type === 'form:fill') { sendResponse(applyFill(message)); return; }
